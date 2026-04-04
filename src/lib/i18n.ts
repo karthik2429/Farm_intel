@@ -859,6 +859,8 @@ const translations: Record<Language, TranslationKeys> = {
     changeDetails: 'विवरण बदलें',
     verifyOtp: 'OTP सत्यापित करें',
     createAndSendOtp: 'बनाएं और OTP भेजें',
+    yourName: 'आपका नाम',
+    enterYourName: 'अपना पूरा नाम दर्ज करें',
     namaste: 'नमस्ते',
     letsSetup: 'बेहतर उगाने के लिए अपनी प्रोफ़ाइल सेट करें',
     preferredLanguage: 'पसंदीदा भाषा',
