@@ -19,12 +19,15 @@ const FarmerProfilePage: React.FC = () => {
   const [showLangPicker, setShowLangPicker] = useState(false);
 
   // Profile data (local state — you'll connect your backend later)
-  const [name, setName] = useState('Farmer');
-  const [state, setState] = useState('');
-  const [district, setDistrict] = useState('');
-  const [districtSearch, setDistrictSearch] = useState('');
+  const [name, setName] = useState(() => localStorage.getItem('profile_name') || '');
+  const [state, setState] = useState(() => localStorage.getItem('profile_state') || '');
+  const [district, setDistrict] = useState(() => localStorage.getItem('profile_district') || '');
+  const [districtSearch, setDistrictSearch] = useState(() => localStorage.getItem('profile_district') || '');
   const [showDistrictDropdown, setShowDistrictDropdown] = useState(false);
-  const [selectedCrops, setSelectedCrops] = useState<string[]>(['cereals']);
+  const [selectedCrops, setSelectedCrops] = useState<string[]>(() => {
+    const saved = localStorage.getItem('profile_crops');
+    return saved ? JSON.parse(saved) : ['cereals'];
+  });
   const [detectingLocation, setDetectingLocation] = useState(false);
 
   const districts = useMemo(() => getDistricts(state), [state]);
@@ -153,7 +156,7 @@ const FarmerProfilePage: React.FC = () => {
         <div className="glass-card p-4">
           <div className="flex items-center justify-between mb-2">
             <label className="text-xs font-bold text-muted-foreground uppercase tracking-wider">{t('yourName')}</label>
-            <button onClick={() => setEditingSection(editingSection === 'name' ? null : 'name')} className="text-primary">
+            <button onClick={() => { if (editingSection === 'name') { localStorage.setItem('profile_name', name); } setEditingSection(editingSection === 'name' ? null : 'name'); }} className="text-primary">
               {editingSection === 'name' ? <Check className="w-4 h-4" /> : <Edit2 className="w-4 h-4" />}
             </button>
           </div>
@@ -206,7 +209,7 @@ const FarmerProfilePage: React.FC = () => {
         <div className="glass-card p-4">
           <div className="flex items-center justify-between mb-2">
             <label className="text-xs font-bold text-muted-foreground uppercase tracking-wider">{t('location')}</label>
-            <button onClick={() => setEditingSection(editingSection === 'location' ? null : 'location')} className="text-primary">
+            <button onClick={() => { if (editingSection === 'location') { localStorage.setItem('profile_state', state); localStorage.setItem('profile_district', district); } setEditingSection(editingSection === 'location' ? null : 'location'); }} className="text-primary">
               {editingSection === 'location' ? <Check className="w-4 h-4" /> : <Edit2 className="w-4 h-4" />}
             </button>
           </div>
@@ -274,7 +277,7 @@ const FarmerProfilePage: React.FC = () => {
         <div className="glass-card p-4">
           <div className="flex items-center justify-between mb-2">
             <label className="text-xs font-bold text-muted-foreground uppercase tracking-wider">{t('whatDoYouGrow')}</label>
-            <button onClick={() => setEditingSection(editingSection === 'crops' ? null : 'crops')} className="text-primary">
+            <button onClick={() => { if (editingSection === 'crops') { localStorage.setItem('profile_crops', JSON.stringify(selectedCrops)); } setEditingSection(editingSection === 'crops' ? null : 'crops'); }} className="text-primary">
               {editingSection === 'crops' ? <Check className="w-4 h-4" /> : <Edit2 className="w-4 h-4" />}
             </button>
           </div>
