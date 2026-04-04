@@ -15,6 +15,7 @@ import PricePredictionPage from "./pages/PricePredictionPage";
 import CropRotationPage from "./pages/CropRotationPage";
 import AIChatPage from "./pages/AIChatPage";
 import FarmerProfilePage from "./pages/FarmerProfilePage";
+import MarketplacePage from "./pages/MarketplacePage";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
