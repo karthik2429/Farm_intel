@@ -4,19 +4,31 @@ import { useLanguage } from '@/contexts/LanguageContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { languageNames, Language } from '@/lib/i18n';
 import { allStates, getDistricts } from '@/lib/indian-locations';
-import { MapPin, Wheat, Apple, Banknote, Locate, Loader2, Search } from 'lucide-react';
+import { MapPin, Wheat, Apple, Banknote, Locate, Loader2, Search, User } from 'lucide-react';
 import { toast } from 'sonner';
 
 const ProfileSetupPage: React.FC = () => {
   const { t, language, setLanguage } = useLanguage();
   const { user, loading: authLoading } = useAuth();
   const navigate = useNavigate();
+  const [name, setName] = useState('');
   const [state, setState] = useState('');
   const [district, setDistrict] = useState('');
   const [districtSearch, setDistrictSearch] = useState('');
   const [showDistrictDropdown, setShowDistrictDropdown] = useState(false);
   const [selectedCrops, setSelectedCrops] = useState<string[]>(['cereals']);
   const [detectingLocation, setDetectingLocation] = useState(false);
+
+  // Auto-fill name from Google OAuth metadata
+  useEffect(() => {
+    if (user) {
+      const fullName =
+        user.user_metadata?.full_name ||
+        user.user_metadata?.name ||
+        '';
+      if (fullName) setName(fullName);
+    }
+  }, [user]);
 
   // Redirect to login if not authenticated
   useEffect(() => {
