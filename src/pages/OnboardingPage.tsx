@@ -50,7 +50,7 @@ const OnboardingPage: React.FC = () => {
     await new Promise((r) => setTimeout(r, 600));
     toast.success(mode === 'signup' ? 'Account created!' : 'Logged in!');
     setLoading(false);
-    navigate('/setup');
+    navigate(mode === 'signup' ? '/setup' : '/home');
   };
 
   const handleSendPhoneOtp = async () => {
