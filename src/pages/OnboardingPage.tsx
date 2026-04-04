@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
+import { lovable } from '@/integrations/lovable/index';
 import { ChevronRight, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import heroFarm from '@/assets/hero-farm.jpg';
