@@ -28,24 +28,16 @@ const OnboardingPage: React.FC = () => {
     if (user) navigate('/setup', { replace: true });
   }, [user, navigate]);
 
+  // Fake OTP - no real backend verification
   const handleSendEmailOtp = async () => {
     if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       toast.error('Please enter a valid email address');
       return;
     }
     setLoading(true);
-    const { error } = await supabase.auth.signInWithOtp({
-      email,
-      options: {
-        shouldCreateUser: mode === 'signup',
-      },
-    });
-    if (error) {
-      toast.error(error.message || 'Failed to send OTP');
-    } else {
-      setOtpSent(true);
-      toast.success('OTP sent to your email! Check your inbox.');
-    }
+    await new Promise((r) => setTimeout(r, 800));
+    setOtpSent(true);
+    toast.success('OTP sent to your email! (Enter any 6 digits)');
     setLoading(false);
   };
 
@@ -55,18 +47,10 @@ const OnboardingPage: React.FC = () => {
       return;
     }
     setLoading(true);
-    const { error } = await supabase.auth.verifyOtp({
-      email,
-      token: otp,
-      type: 'email',
-    });
-    if (error) {
-      toast.error(error.message || 'Invalid OTP');
-    } else {
-      toast.success(mode === 'signup' ? 'Account created!' : 'Logged in!');
-      navigate('/setup');
-    }
+    await new Promise((r) => setTimeout(r, 600));
+    toast.success(mode === 'signup' ? 'Account created!' : 'Logged in!');
     setLoading(false);
+    navigate('/setup');
   };
 
   const handleSendPhoneOtp = async () => {
@@ -76,21 +60,23 @@ const OnboardingPage: React.FC = () => {
       return;
     }
     setLoading(true);
-    const fullPhone = cleaned.startsWith('+91') ? cleaned : `+91${cleaned}`;
-    const { error } = await supabase.auth.signInWithOtp({
-      phone: fullPhone,
-      options: { shouldCreateUser: mode === 'signup' },
-    });
-    if (error) {
-      toast.error(error.message || 'Failed to send OTP');
-    } else {
-      setOtpSent(true);
-      toast.success('OTP sent to your phone!');
-    }
+    await new Promise((r) => setTimeout(r, 800));
+    setOtpSent(true);
+    toast.success('OTP sent to your phone! (Enter any 6 digits)');
     setLoading(false);
   };
 
   const handleVerifyPhoneOtp = async () => {
+    if (otp.length < 6) {
+      toast.error('Please enter the 6-digit OTP');
+      return;
+    }
+    setLoading(true);
+    await new Promise((r) => setTimeout(r, 600));
+    toast.success(mode === 'signup' ? 'Account created!' : 'Logged in!');
+    setLoading(false);
+    navigate('/setup');
+  };
     if (otp.length < 6) {
       toast.error('Please enter the 6-digit OTP');
       return;
