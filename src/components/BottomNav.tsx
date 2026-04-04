@@ -1,4 +1,5 @@
 import React from 'react';
+
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Home, TrendingUp, Bot, Sprout, ShoppingCart } from 'lucide-react';
 import { useLanguage } from '@/contexts/LanguageContext';
