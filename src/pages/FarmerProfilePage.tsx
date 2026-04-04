@@ -277,7 +277,7 @@ const FarmerProfilePage: React.FC = () => {
         <div className="glass-card p-4">
           <div className="flex items-center justify-between mb-2">
             <label className="text-xs font-bold text-muted-foreground uppercase tracking-wider">{t('whatDoYouGrow')}</label>
-            <button onClick={() => setEditingSection(editingSection === 'crops' ? null : 'crops')} className="text-primary">
+            <button onClick={() => { if (editingSection === 'crops') { localStorage.setItem('profile_crops', JSON.stringify(selectedCrops)); } setEditingSection(editingSection === 'crops' ? null : 'crops'); }} className="text-primary">
               {editingSection === 'crops' ? <Check className="w-4 h-4" /> : <Edit2 className="w-4 h-4" />}
             </button>
           </div>
