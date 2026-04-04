@@ -22,7 +22,7 @@ const FarmerProfilePage: React.FC = () => {
   const [showLangPicker, setShowLangPicker] = useState(false);
 
   // Profile data (local state — you'll connect your backend later)
-  const [name, setName] = useState(() => localStorage.getItem('profile_name') || '');
+  const [name, setName] = useState(() => localStorage.getItem('profile_name') || user?.user_metadata?.full_name || user?.user_metadata?.name || '');
   const [state, setState] = useState(() => localStorage.getItem('profile_state') || '');
   const [district, setDistrict] = useState(() => localStorage.getItem('profile_district') || '');
   const [districtSearch, setDistrictSearch] = useState(() => localStorage.getItem('profile_district') || '');
