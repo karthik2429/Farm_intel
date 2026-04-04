@@ -1,6 +1,7 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useLanguage } from '@/contexts/LanguageContext';
+import { useAuth } from '@/contexts/AuthContext';
 import { Cloud, Sprout, TrendingUp, RotateCcw, Brain, ChevronRight, Droplets, Wind } from 'lucide-react';
 import BottomNav from '@/components/BottomNav';
 import cropRice from '@/assets/crop-rice.jpg';
@@ -9,7 +10,10 @@ import cropSugarcane from '@/assets/crop-sugarcane.jpg';
 
 const HomeDashboard: React.FC = () => {
   const { t } = useLanguage();
+  const { user } = useAuth();
   const navigate = useNavigate();
+
+  const userName = user?.user_metadata?.full_name || user?.user_metadata?.name || localStorage.getItem('profile_name') || '';
 
   const smartActions = [
     { icon: Sprout, label: t('cropRecs'), desc: t('aiBasedSelection'), color: 'text-primary', path: '/crop-recommendations' },
@@ -30,7 +34,7 @@ const HomeDashboard: React.FC = () => {
       <div className="px-5 pt-5 pb-3">
         <div className="flex items-center justify-between">
           <div>
-            <p className="text-xs text-muted-foreground">{t('namaste')}, Rajesh</p>
+            <p className="text-xs text-muted-foreground">{t('namaste')}{userName ? `, ${userName}` : ''}</p>
             <h1 className="text-lg font-extrabold text-foreground">🌾 {t('appName')}</h1>
           </div>
           <button onClick={() => navigate('/profile')} className="w-9 h-9 rounded-full bg-secondary flex items-center justify-center">
