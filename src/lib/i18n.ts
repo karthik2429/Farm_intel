@@ -133,6 +133,29 @@ type TranslationKeys = {
   harvestSchedule: string;
   darkMode: string;
   privacySecurity: string;
+
+  // Crop Advisor Location
+  chooseLocation: string;
+  useCurrentLocation: string;
+  selectDistrict: string;
+  autoDetect: string;
+
+  // Marketplace
+  marketplace: string;
+  sellYourProduce: string;
+  addListing: string;
+  productName: string;
+  quantity: string;
+  pricePerUnit: string;
+  description: string;
+  availableListings: string;
+  contactSeller: string;
+  myListings: string;
+  allListings: string;
+  category: string;
+  postListing: string;
+  perKg: string;
+  perQuintal: string;
 };
 
 const translations: Record<Language, TranslationKeys> = {
@@ -236,6 +259,25 @@ const translations: Record<Language, TranslationKeys> = {
     harvestSchedule: 'Harvest Schedule',
     darkMode: 'Dark Mode',
     privacySecurity: 'Privacy & Security',
+    chooseLocation: 'Choose Location',
+    useCurrentLocation: 'Use Current Location',
+    selectDistrict: 'Select District',
+    autoDetect: 'Auto Detect',
+    marketplace: 'Marketplace',
+    sellYourProduce: 'Buy & sell farm produce directly',
+    addListing: 'Add Listing',
+    productName: 'Product Name',
+    quantity: 'Quantity',
+    pricePerUnit: 'Price / Unit',
+    description: 'Description',
+    availableListings: 'Available Listings',
+    contactSeller: 'Contact Seller',
+    myListings: 'My Listings',
+    allListings: 'All Listings',
+    category: 'Category',
+    postListing: 'Post Listing',
+    perKg: '/kg',
+    perQuintal: '/quintal',
   },
   ta: {
     appName: 'அக்ரோஸ்மார்ட் AI',
@@ -337,6 +379,25 @@ const translations: Record<Language, TranslationKeys> = {
     harvestSchedule: 'அறுவடை அட்டவணை',
     darkMode: 'இருண்ட பயன்முறை',
     privacySecurity: 'தனியுரிமை & பாதுகாப்பு',
+    chooseLocation: 'இடம் தேர்வு',
+    useCurrentLocation: 'தற்போதைய இடத்தைப் பயன்படுத்து',
+    selectDistrict: 'மாவட்டம் தேர்வு',
+    autoDetect: 'தானியங்கி கண்டறிதல்',
+    marketplace: 'சந்தை இடம்',
+    sellYourProduce: 'விவசாய விளைபொருட்களை நேரடியாக வாங்கவும் விற்கவும்',
+    addListing: 'பட்டியல் சேர்',
+    productName: 'பொருள் பெயர்',
+    quantity: 'அளவு',
+    pricePerUnit: 'விலை / அலகு',
+    description: 'விளக்கம்',
+    availableListings: 'கிடைக்கும் பட்டியல்கள்',
+    contactSeller: 'விற்பனையாளரைத் தொடர்பு கொள்',
+    myListings: 'என் பட்டியல்கள்',
+    allListings: 'அனைத்து பட்டியல்கள்',
+    category: 'வகை',
+    postListing: 'பட்டியல் பதிவு',
+    perKg: '/கிலோ',
+    perQuintal: '/குவிண்டால்',
   },
   te: {
     appName: 'అగ్రోస్మార్ట్ AI',
@@ -438,6 +499,25 @@ const translations: Record<Language, TranslationKeys> = {
     harvestSchedule: 'పంట కోత షెడ్యూల్',
     darkMode: 'డార్క్ మోడ్',
     privacySecurity: 'గోప్యత & భద్రత',
+    chooseLocation: 'స్థానం ఎంచుకోండి',
+    useCurrentLocation: 'ప్రస్తుత స్థానాన్ని ఉపయోగించండి',
+    selectDistrict: 'జిల్లా ఎంచుకోండి',
+    autoDetect: 'ఆటో డిటెక్ట్',
+    marketplace: 'మార్కెట్‌ప్లేస్',
+    sellYourProduce: 'వ్యవసాయ ఉత్పత్తులను నేరుగా కొనండి & అమ్మండి',
+    addListing: 'జాబితా జోడించండి',
+    productName: 'ఉత్పత్తి పేరు',
+    quantity: 'పరిమాణం',
+    pricePerUnit: 'ధర / యూనిట్',
+    description: 'వివరణ',
+    availableListings: 'అందుబాటులో ఉన్న జాబితాలు',
+    contactSeller: 'విక్రేతను సంప్రదించండి',
+    myListings: 'నా జాబితాలు',
+    allListings: 'అన్ని జాబితాలు',
+    category: 'వర్గం',
+    postListing: 'జాబితా పోస్ట్ చేయండి',
+    perKg: '/కిలో',
+    perQuintal: '/క్వింటాల్',
   },
   kn: {
     appName: 'ಅಗ್ರೋಸ್ಮಾರ್ಟ್ AI',
@@ -539,6 +619,25 @@ const translations: Record<Language, TranslationKeys> = {
     harvestSchedule: 'ಕೊಯ್ಲು ವೇಳಾಪಟ್ಟಿ',
     darkMode: 'ಡಾರ್ಕ್ ಮೋಡ್',
     privacySecurity: 'ಗೌಪ್ಯತೆ & ಭದ್ರತೆ',
+    chooseLocation: 'ಸ್ಥಳ ಆಯ್ಕೆ',
+    useCurrentLocation: 'ಪ್ರಸ್ತುತ ಸ್ಥಳವನ್ನು ಬಳಸಿ',
+    selectDistrict: 'ಜಿಲ್ಲೆ ಆಯ್ಕೆ',
+    autoDetect: 'ಸ್ವಯಂ ಪತ್ತೆ',
+    marketplace: 'ಮಾರುಕಟ್ಟೆ ಸ್ಥಳ',
+    sellYourProduce: 'ಕೃಷಿ ಉತ್ಪನ್ನಗಳನ್ನು ನೇರವಾಗಿ ಖರೀದಿಸಿ ಮತ್ತು ಮಾರಾಟ ಮಾಡಿ',
+    addListing: 'ಪಟ್ಟಿ ಸೇರಿಸಿ',
+    productName: 'ಉತ್ಪನ್ನ ಹೆಸರು',
+    quantity: 'ಪ್ರಮಾಣ',
+    pricePerUnit: 'ಬೆಲೆ / ಘಟಕ',
+    description: 'ವಿವರಣೆ',
+    availableListings: 'ಲಭ್ಯವಿರುವ ಪಟ್ಟಿಗಳು',
+    contactSeller: 'ಮಾರಾಟಗಾರನನ್ನು ಸಂಪರ್ಕಿಸಿ',
+    myListings: 'ನನ್ನ ಪಟ್ಟಿಗಳು',
+    allListings: 'ಎಲ್ಲಾ ಪಟ್ಟಿಗಳು',
+    category: 'ವರ್ಗ',
+    postListing: 'ಪಟ್ಟಿ ಪೋಸ್ಟ್ ಮಾಡಿ',
+    perKg: '/ಕಿಲೋ',
+    perQuintal: '/ಕ್ವಿಂಟಲ್',
   },
   ml: {
     appName: 'അഗ്രോസ്മാർട്ട് AI',
@@ -640,6 +739,25 @@ const translations: Record<Language, TranslationKeys> = {
     harvestSchedule: 'വിളവെടുപ്പ് ഷെഡ്യൂൾ',
     darkMode: 'ഡാർക്ക് മോഡ്',
     privacySecurity: 'സ്വകാര്യത & സുരക്ഷ',
+    chooseLocation: 'സ്ഥലം തിരഞ്ഞെടുക്കുക',
+    useCurrentLocation: 'നിലവിലെ സ്ഥലം ഉപയോഗിക്കുക',
+    selectDistrict: 'ജില്ല തിരഞ്ഞെടുക്കുക',
+    autoDetect: 'ഓട്ടോ ഡിറ്റക്ട്',
+    marketplace: 'മാർക്കറ്റ്‌പ്ലേസ്',
+    sellYourProduce: 'കാർഷിക ഉൽപ്പന്നങ്ങൾ നേരിട്ട് വാങ്ങുകയും വിൽക്കുകയും ചെയ്യുക',
+    addListing: 'ലിസ്റ്റിംഗ് ചേർക്കുക',
+    productName: 'ഉൽപ്പന്ന പേര്',
+    quantity: 'അളവ്',
+    pricePerUnit: 'വില / യൂണിറ്റ്',
+    description: 'വിവരണം',
+    availableListings: 'ലഭ്യമായ ലിസ്റ്റിംഗുകൾ',
+    contactSeller: 'വിൽപ്പനക്കാരനെ ബന്ധപ്പെടുക',
+    myListings: 'എന്റെ ലിസ്റ്റിംഗുകൾ',
+    allListings: 'എല്ലാ ലിസ്റ്റിംഗുകൾ',
+    category: 'വിഭാഗം',
+    postListing: 'ലിസ്റ്റിംഗ് പോസ്റ്റ് ചെയ്യുക',
+    perKg: '/കിലോ',
+    perQuintal: '/ക്വിന്റൽ',
   },
   hi: {
     appName: 'एग्रोस्मार्ट AI',
@@ -741,6 +859,25 @@ const translations: Record<Language, TranslationKeys> = {
     harvestSchedule: 'कटाई कार्यक्रम',
     darkMode: 'डार्क मोड',
     privacySecurity: 'गोपनीयता और सुरक्षा',
+    chooseLocation: 'स्थान चुनें',
+    useCurrentLocation: 'वर्तमान स्थान का उपयोग करें',
+    selectDistrict: 'जिला चुनें',
+    autoDetect: 'स्वतः पता लगाएं',
+    marketplace: 'मार्केटप्लेस',
+    sellYourProduce: 'कृषि उपज सीधे खरीदें और बेचें',
+    addListing: 'सूची जोड़ें',
+    productName: 'उत्पाद का नाम',
+    quantity: 'मात्रा',
+    pricePerUnit: 'मूल्य / इकाई',
+    description: 'विवरण',
+    availableListings: 'उपलब्ध सूचियां',
+    contactSeller: 'विक्रेता से संपर्क करें',
+    myListings: 'मेरी सूचियां',
+    allListings: 'सभी सूचियां',
+    category: 'श्रेणी',
+    postListing: 'सूची पोस्ट करें',
+    perKg: '/किलो',
+    perQuintal: '/क्विंटल',
   },
   ur: {
     appName: 'ایگرو سمارٹ AI',
@@ -842,6 +979,25 @@ const translations: Record<Language, TranslationKeys> = {
     harvestSchedule: 'فصل کٹائی کا شیڈول',
     darkMode: 'ڈارک موڈ',
     privacySecurity: 'پرائیویسی اور سیکیورٹی',
+    chooseLocation: 'مقام منتخب کریں',
+    useCurrentLocation: 'موجودہ مقام استعمال کریں',
+    selectDistrict: 'ضلع منتخب کریں',
+    autoDetect: 'آٹو ڈٹیکٹ',
+    marketplace: 'مارکیٹ پلیس',
+    sellYourProduce: 'زرعی پیداوار براہ راست خریدیں اور فروخت کریں',
+    addListing: 'فہرست شامل کریں',
+    productName: 'مصنوع کا نام',
+    quantity: 'مقدار',
+    pricePerUnit: 'قیمت / یونٹ',
+    description: 'تفصیل',
+    availableListings: 'دستیاب فہرستیں',
+    contactSeller: 'فروخت کنندہ سے رابطہ کریں',
+    myListings: 'میری فہرستیں',
+    allListings: 'تمام فہرستیں',
+    category: 'زمرہ',
+    postListing: 'فہرست پوسٹ کریں',
+    perKg: '/کلو',
+    perQuintal: '/کوئنٹل',
   },
 };
 

@@ -15,6 +15,7 @@ import PricePredictionPage from "./pages/PricePredictionPage";
 import CropRotationPage from "./pages/CropRotationPage";
 import AIChatPage from "./pages/AIChatPage";
 import FarmerProfilePage from "./pages/FarmerProfilePage";
+import MarketplacePage from "./pages/MarketplacePage";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -40,6 +41,7 @@ const App = () => (
                 <Route path="/crops" element={<CropRecommendationsPage />} />
                 <Route path="/ai-chat" element={<AIChatPage />} />
                 <Route path="/profile" element={<FarmerProfilePage />} />
+                <Route path="/marketplace" element={<MarketplacePage />} />
                 <Route path="*" element={<NotFound />} />
               </Routes>
             </div>
