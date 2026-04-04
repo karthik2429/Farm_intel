@@ -38,6 +38,15 @@ type TranslationKeys = {
   onboardingSubtitle: string;
   phoneNumber: string;
   empoweringFarmers: string;
+  createAccount: string;
+  createNewAccount: string;
+  email: string;
+  enterEmail: string;
+  enterEmailOtp: string;
+  enterPhoneOtp: string;
+  changeDetails: string;
+  verifyOtp: string;
+  createAndSendOtp: string;
 
   // Profile Setup
   namaste: string;
