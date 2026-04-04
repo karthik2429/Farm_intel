@@ -136,6 +136,22 @@ const ProfileSetupPage: React.FC = () => {
       <h1 className="text-xl font-extrabold text-foreground">{t('namaste')} 🙏</h1>
       <p className="text-xs text-muted-foreground mt-1">{t('letsSetup')}</p>
 
+      {/* Name */}
+      <div className="mt-5">
+        <label className="text-xs font-bold text-muted-foreground uppercase tracking-wider">{t('yourName')}</label>
+        <div className="flex items-center gap-2 bg-secondary rounded-lg px-3 py-2.5 mt-2">
+          <User className="w-4 h-4 text-primary" />
+          <input
+            type="text"
+            placeholder={t('enterYourName')}
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            className="flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground"
+            maxLength={100}
+          />
+        </div>
+      </div>
+
       {/* Language Selection */}
       <div className="mt-5">
         <label className="text-xs font-bold text-muted-foreground uppercase tracking-wider">{t('preferredLanguage')}</label>
