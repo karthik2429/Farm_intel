@@ -77,26 +77,8 @@ const OnboardingPage: React.FC = () => {
     setLoading(false);
     navigate('/setup');
   };
-    if (otp.length < 6) {
-      toast.error('Please enter the 6-digit OTP');
-      return;
-    }
-    setLoading(true);
-    const cleaned = phone.replace(/\s/g, '');
-    const fullPhone = cleaned.startsWith('+91') ? cleaned : `+91${cleaned}`;
-    const { error } = await supabase.auth.verifyOtp({
-      phone: fullPhone,
-      token: otp,
-      type: 'sms',
-    });
-    if (error) {
-      toast.error(error.message || 'Invalid OTP');
-    } else {
-      toast.success(mode === 'signup' ? 'Account created!' : 'Logged in!');
-      navigate('/setup');
-    }
-    setLoading(false);
-  };
+
+
 
   const handleGoogleLogin = async () => {
     setLoading(true);
