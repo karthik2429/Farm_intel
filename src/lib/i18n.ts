@@ -335,6 +335,8 @@ const translations: Record<Language, TranslationKeys> = {
     changeDetails: 'விவரங்களை மாற்று',
     verifyOtp: 'OTP சரிபார்',
     createAndSendOtp: 'உருவாக்கி OTP அனுப்பு',
+    yourName: 'உங்கள் பெயர்',
+    enterYourName: 'உங்கள் முழு பெயரை உள்ளிடவும்',
     namaste: 'வணக்கம்',
     letsSetup: 'சிறப்பாக வளர உங்கள் சுயவிவரத்தை அமைப்போம்',
     preferredLanguage: 'விருப்ப மொழி',
