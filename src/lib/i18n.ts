@@ -49,6 +49,8 @@ type TranslationKeys = {
   createAndSendOtp: string;
 
   // Profile Setup
+  yourName: string;
+  enterYourName: string;
   namaste: string;
   letsSetup: string;
   preferredLanguage: string;
