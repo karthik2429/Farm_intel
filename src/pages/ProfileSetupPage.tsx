@@ -281,7 +281,7 @@ const ProfileSetupPage: React.FC = () => {
       </div>
 
       <button
-        onClick={() => navigate('/home')}
+        onClick={() => { if (name) localStorage.setItem('profile_name', name); navigate('/home'); }}
         className="w-full gradient-primary text-primary-foreground py-3 rounded-xl font-bold text-sm mt-6 hover:opacity-90 transition-opacity"
       >
         {t('completeSetup')} →
