@@ -41,6 +41,7 @@ const App = () => (
                 <Route path="/crops" element={<CropRecommendationsPage />} />
                 <Route path="/ai-chat" element={<AIChatPage />} />
                 <Route path="/profile" element={<FarmerProfilePage />} />
+                <Route path="/marketplace" element={<MarketplacePage />} />
                 <Route path="*" element={<NotFound />} />
               </Routes>
             </div>

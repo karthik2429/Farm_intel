@@ -13,7 +13,7 @@ const BottomNav: React.FC = () => {
     { path: '/market', icon: TrendingUp, label: t('marketNav') },
     { path: '/ai-chat', icon: Bot, label: t('aiApp') },
     { path: '/crops', icon: Sprout, label: t('crops') },
-    { path: '/profile', icon: User, label: t('profile') },
+    { path: '/marketplace', icon: ShoppingCart, label: t('marketplace') },
   ];
 
   return (
