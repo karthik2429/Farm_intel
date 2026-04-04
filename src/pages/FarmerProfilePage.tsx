@@ -209,7 +209,7 @@ const FarmerProfilePage: React.FC = () => {
         <div className="glass-card p-4">
           <div className="flex items-center justify-between mb-2">
             <label className="text-xs font-bold text-muted-foreground uppercase tracking-wider">{t('location')}</label>
-            <button onClick={() => setEditingSection(editingSection === 'location' ? null : 'location')} className="text-primary">
+            <button onClick={() => { if (editingSection === 'location') { localStorage.setItem('profile_state', state); localStorage.setItem('profile_district', district); } setEditingSection(editingSection === 'location' ? null : 'location'); }} className="text-primary">
               {editingSection === 'location' ? <Check className="w-4 h-4" /> : <Edit2 className="w-4 h-4" />}
             </button>
           </div>
