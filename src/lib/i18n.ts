@@ -133,6 +133,29 @@ type TranslationKeys = {
   harvestSchedule: string;
   darkMode: string;
   privacySecurity: string;
+
+  // Crop Advisor Location
+  chooseLocation: string;
+  useCurrentLocation: string;
+  selectDistrict: string;
+  autoDetect: string;
+
+  // Marketplace
+  marketplace: string;
+  sellYourProduce: string;
+  addListing: string;
+  productName: string;
+  quantity: string;
+  pricePerUnit: string;
+  description: string;
+  availableListings: string;
+  contactSeller: string;
+  myListings: string;
+  allListings: string;
+  category: string;
+  postListing: string;
+  perKg: string;
+  perQuintal: string;
 };
 
 const translations: Record<Language, TranslationKeys> = {
