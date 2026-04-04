@@ -25,7 +25,7 @@ const OnboardingPage: React.FC = () => {
   const [loading, setLoading] = useState(false);
 
   React.useEffect(() => {
-    if (user) navigate('/setup', { replace: true });
+    if (user) navigate('/home', { replace: true });
   }, [user, navigate]);
 
   // Fake OTP - no real backend verification
