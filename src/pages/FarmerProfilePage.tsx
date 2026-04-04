@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useLanguage } from '@/contexts/LanguageContext';
+import { useAuth } from '@/contexts/AuthContext';
 import { languageNames, Language } from '@/lib/i18n';
 import { allStates, getDistricts } from '@/lib/indian-locations';
 import {
@@ -12,6 +13,7 @@ import { toast } from 'sonner';
 
 const FarmerProfilePage: React.FC = () => {
   const { t, language, setLanguage } = useLanguage();
+  const { user } = useAuth();
   const navigate = useNavigate();
 
   // Editing state
@@ -19,7 +21,7 @@ const FarmerProfilePage: React.FC = () => {
   const [showLangPicker, setShowLangPicker] = useState(false);
 
   // Profile data (local state — you'll connect your backend later)
-  const [name, setName] = useState(() => localStorage.getItem('profile_name') || '');
+  const [name, setName] = useState(() => localStorage.getItem('profile_name') || user?.user_metadata?.full_name || user?.user_metadata?.name || '');
   const [state, setState] = useState(() => localStorage.getItem('profile_state') || '');
   const [district, setDistrict] = useState(() => localStorage.getItem('profile_district') || '');
   const [districtSearch, setDistrictSearch] = useState(() => localStorage.getItem('profile_district') || '');
