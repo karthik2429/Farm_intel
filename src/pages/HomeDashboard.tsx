@@ -34,7 +34,7 @@ const HomeDashboard: React.FC = () => {
       <div className="px-5 pt-5 pb-3">
         <div className="flex items-center justify-between">
           <div>
-            <p className="text-xs text-muted-foreground">{t('namaste')}, Rajesh</p>
+            <p className="text-xs text-muted-foreground">{t('namaste')}{userName ? `, ${userName}` : ''}</p>
             <h1 className="text-lg font-extrabold text-foreground">🌾 {t('appName')}</h1>
           </div>
           <button onClick={() => navigate('/profile')} className="w-9 h-9 rounded-full bg-secondary flex items-center justify-center">
