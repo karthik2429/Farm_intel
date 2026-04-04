@@ -156,7 +156,7 @@ const FarmerProfilePage: React.FC = () => {
         <div className="glass-card p-4">
           <div className="flex items-center justify-between mb-2">
             <label className="text-xs font-bold text-muted-foreground uppercase tracking-wider">{t('yourName')}</label>
-            <button onClick={() => setEditingSection(editingSection === 'name' ? null : 'name')} className="text-primary">
+            <button onClick={() => { if (editingSection === 'name') { localStorage.setItem('profile_name', name); } setEditingSection(editingSection === 'name' ? null : 'name'); }} className="text-primary">
               {editingSection === 'name' ? <Check className="w-4 h-4" /> : <Edit2 className="w-4 h-4" />}
             </button>
           </div>
