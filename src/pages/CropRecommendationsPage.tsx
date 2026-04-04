@@ -10,11 +10,11 @@ const CropRecommendationsPage: React.FC = () => {
   const { t } = useLanguage();
   const navigate = useNavigate();
   const [season, setSeason] = useState('kharif');
-  const [nitrogen, setNitrogen] = useState('40');
-  const [phosphorus, setPhosphorus] = useState('15');
-  const [potassium, setPotassium] = useState('10');
-  const [ph, setPh] = useState('6.5');
-  const [rainfall, setRainfall] = useState('800');
+  const [nitrogen, setNitrogen] = useState('');
+  const [phosphorus, setPhosphorus] = useState('');
+  const [potassium, setPotassium] = useState('');
+  const [ph, setPh] = useState('');
+  const [rainfall, setRainfall] = useState('');
 
   const [locationMode, setLocationMode] = useState<'current' | 'custom'>('current');
   const [selectedState, setSelectedState] = useState('Karnataka');
@@ -66,7 +66,6 @@ const CropRecommendationsPage: React.FC = () => {
   const seasons = [
     { id: 'kharif', label: t('kharif') },
     { id: 'rabi', label: t('rabi') },
-    { id: 'zaid', label: t('zaid') },
   ];
 
   return (
