@@ -8,9 +8,9 @@ const AIChatPage: React.FC = () => {
   const { t } = useLanguage();
   const navigate = useNavigate();
   const [input, setInput] = useState('');
-  const [messages, setMessages] = useState([
+  const [messages, setMessages] = useState<{ role: 'user' | 'assistant'; content: string }[]>([
     {
-      role: 'assistant' as const,
+      role: 'assistant',
       content: `${t('namaste')}! ${t('howCanIHelp')}`,
     },
   ]);
