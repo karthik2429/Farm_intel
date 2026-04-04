@@ -25,7 +25,7 @@ const OnboardingPage: React.FC = () => {
   const [loading, setLoading] = useState(false);
 
   React.useEffect(() => {
-    if (user) navigate('/setup', { replace: true });
+    if (user) navigate('/home', { replace: true });
   }, [user, navigate]);
 
   // Fake OTP - no real backend verification
@@ -50,7 +50,7 @@ const OnboardingPage: React.FC = () => {
     await new Promise((r) => setTimeout(r, 600));
     toast.success(mode === 'signup' ? 'Account created!' : 'Logged in!');
     setLoading(false);
-    navigate('/setup');
+    navigate(mode === 'signup' ? '/setup' : '/home');
   };
 
   const handleSendPhoneOtp = async () => {
@@ -75,7 +75,7 @@ const OnboardingPage: React.FC = () => {
     await new Promise((r) => setTimeout(r, 600));
     toast.success(mode === 'signup' ? 'Account created!' : 'Logged in!');
     setLoading(false);
-    navigate('/setup');
+    navigate(mode === 'signup' ? '/setup' : '/home');
   };
 
 
