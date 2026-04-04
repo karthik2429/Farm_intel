@@ -49,6 +49,8 @@ type TranslationKeys = {
   createAndSendOtp: string;
 
   // Profile Setup
+  yourName: string;
+  enterYourName: string;
   namaste: string;
   letsSetup: string;
   preferredLanguage: string;
@@ -202,6 +204,8 @@ const translations: Record<Language, TranslationKeys> = {
     changeDetails: 'Change details',
     verifyOtp: 'Verify OTP',
     createAndSendOtp: 'Create & Send OTP',
+    yourName: 'Your Name',
+    enterYourName: 'Enter your full name',
     namaste: 'Namaste',
     letsSetup: "Let's set up your profile to help you grow better",
     preferredLanguage: 'Preferred Language',
@@ -331,6 +335,8 @@ const translations: Record<Language, TranslationKeys> = {
     changeDetails: 'விவரங்களை மாற்று',
     verifyOtp: 'OTP சரிபார்',
     createAndSendOtp: 'உருவாக்கி OTP அனுப்பு',
+    yourName: 'உங்கள் பெயர்',
+    enterYourName: 'உங்கள் முழு பெயரை உள்ளிடவும்',
     namaste: 'வணக்கம்',
     letsSetup: 'சிறப்பாக வளர உங்கள் சுயவிவரத்தை அமைப்போம்',
     preferredLanguage: 'விருப்ப மொழி',
@@ -460,6 +466,8 @@ const translations: Record<Language, TranslationKeys> = {
     changeDetails: 'వివరాలను మార్చండి',
     verifyOtp: 'OTP ధృవీకరించు',
     createAndSendOtp: 'సృష్టించి OTP పంపు',
+    yourName: 'మీ పేరు',
+    enterYourName: 'మీ పూర్తి పేరు నమోదు చేయండి',
     namaste: 'నమస్తే',
     letsSetup: 'మీరు బాగా పెరగడానికి మీ ప్రొఫైల్‌ను సెటప్ చేద్దాం',
     preferredLanguage: 'ఇష్టపడే భాష',
@@ -589,6 +597,8 @@ const translations: Record<Language, TranslationKeys> = {
     changeDetails: 'ವಿವರಗಳನ್ನು ಬದಲಾಯಿಸಿ',
     verifyOtp: 'OTP ಪರಿಶೀಲಿಸಿ',
     createAndSendOtp: 'ರಚಿಸಿ ಮತ್ತು OTP ಕಳುಹಿಸಿ',
+    yourName: 'ನಿಮ್ಮ ಹೆಸರು',
+    enterYourName: 'ನಿಮ್ಮ ಪೂರ್ಣ ಹೆಸರನ್ನು ನಮೂದಿಸಿ',
     namaste: 'ನಮಸ್ತೆ',
     letsSetup: 'ಉತ್ತಮವಾಗಿ ಬೆಳೆಯಲು ನಿಮ್ಮ ಪ್ರೊಫೈಲ್ ಅನ್ನು ಸೆಟಪ್ ಮಾಡೋಣ',
     preferredLanguage: 'ಆದ್ಯತೆಯ ಭಾಷೆ',
@@ -718,6 +728,8 @@ const translations: Record<Language, TranslationKeys> = {
     changeDetails: 'വിശദാംശങ്ങൾ മാറ്റുക',
     verifyOtp: 'OTP പരിശോധിക്കുക',
     createAndSendOtp: 'സൃഷ്ടിച്ച് OTP അയയ്ക്കുക',
+    yourName: 'നിങ്ങളുടെ പേര്',
+    enterYourName: 'നിങ്ങളുടെ മുഴുവൻ പേര് നൽകുക',
     namaste: 'നമസ്തേ',
     letsSetup: 'നന്നായി വളരാൻ നിങ്ങളുടെ പ്രൊഫൈൽ സെറ്റപ്പ് ചെയ്യാം',
     preferredLanguage: 'ഇഷ്ടപ്പെട്ട ഭാഷ',
@@ -847,6 +859,8 @@ const translations: Record<Language, TranslationKeys> = {
     changeDetails: 'विवरण बदलें',
     verifyOtp: 'OTP सत्यापित करें',
     createAndSendOtp: 'बनाएं और OTP भेजें',
+    yourName: 'आपका नाम',
+    enterYourName: 'अपना पूरा नाम दर्ज करें',
     namaste: 'नमस्ते',
     letsSetup: 'बेहतर उगाने के लिए अपनी प्रोफ़ाइल सेट करें',
     preferredLanguage: 'पसंदीदा भाषा',
@@ -976,6 +990,8 @@ const translations: Record<Language, TranslationKeys> = {
     changeDetails: 'تفصیلات تبدیل کریں',
     verifyOtp: 'OTP تصدیق کریں',
     createAndSendOtp: 'بنائیں اور OTP بھیجیں',
+    yourName: 'آپ کا نام',
+    enterYourName: 'اپنا پورا نام درج کریں',
     namaste: 'نمستے',
     letsSetup: 'بہتر اگانے کے لیے اپنا پروفائل سیٹ اپ کریں',
     preferredLanguage: 'پسندیدہ زبان',

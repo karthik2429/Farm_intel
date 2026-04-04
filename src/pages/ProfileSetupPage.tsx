@@ -4,19 +4,31 @@ import { useLanguage } from '@/contexts/LanguageContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { languageNames, Language } from '@/lib/i18n';
 import { allStates, getDistricts } from '@/lib/indian-locations';
-import { MapPin, Wheat, Apple, Banknote, Locate, Loader2, Search } from 'lucide-react';
+import { MapPin, Wheat, Apple, Banknote, Locate, Loader2, Search, User } from 'lucide-react';
 import { toast } from 'sonner';
 
 const ProfileSetupPage: React.FC = () => {
   const { t, language, setLanguage } = useLanguage();
   const { user, loading: authLoading } = useAuth();
   const navigate = useNavigate();
+  const [name, setName] = useState('');
   const [state, setState] = useState('');
   const [district, setDistrict] = useState('');
   const [districtSearch, setDistrictSearch] = useState('');
   const [showDistrictDropdown, setShowDistrictDropdown] = useState(false);
   const [selectedCrops, setSelectedCrops] = useState<string[]>(['cereals']);
   const [detectingLocation, setDetectingLocation] = useState(false);
+
+  // Auto-fill name from Google OAuth metadata
+  useEffect(() => {
+    if (user) {
+      const fullName =
+        user.user_metadata?.full_name ||
+        user.user_metadata?.name ||
+        '';
+      if (fullName) setName(fullName);
+    }
+  }, [user]);
 
   // Redirect to login if not authenticated
   useEffect(() => {
@@ -123,6 +135,22 @@ const ProfileSetupPage: React.FC = () => {
     <div className="min-h-screen bg-background px-5 py-6 pb-8">
       <h1 className="text-xl font-extrabold text-foreground">{t('namaste')} 🙏</h1>
       <p className="text-xs text-muted-foreground mt-1">{t('letsSetup')}</p>
+
+      {/* Name */}
+      <div className="mt-5">
+        <label className="text-xs font-bold text-muted-foreground uppercase tracking-wider">{t('yourName')}</label>
+        <div className="flex items-center gap-2 bg-secondary rounded-lg px-3 py-2.5 mt-2">
+          <User className="w-4 h-4 text-primary" />
+          <input
+            type="text"
+            placeholder={t('enterYourName')}
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            className="flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground"
+            maxLength={100}
+          />
+        </div>
+      </div>
 
       {/* Language Selection */}
       <div className="mt-5">
