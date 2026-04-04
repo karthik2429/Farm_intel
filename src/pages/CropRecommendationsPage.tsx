@@ -66,7 +66,6 @@ const CropRecommendationsPage: React.FC = () => {
   const seasons = [
     { id: 'kharif', label: t('kharif') },
     { id: 'rabi', label: t('rabi') },
-    { id: 'zaid', label: t('zaid') },
   ];
 
   return (
