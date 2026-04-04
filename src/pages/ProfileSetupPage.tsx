@@ -1,15 +1,38 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useLanguage } from '@/contexts/LanguageContext';
+import { useAuth } from '@/contexts/AuthContext';
 import { languageNames, Language } from '@/lib/i18n';
-import { MapPin, ChevronDown, Wheat, Apple, Banknote } from 'lucide-react';
+import { allStates, getDistricts } from '@/lib/indian-locations';
+import { MapPin, Wheat, Apple, Banknote, Locate, Loader2, Search } from 'lucide-react';
+import { toast } from 'sonner';
 
 const ProfileSetupPage: React.FC = () => {
   const { t, language, setLanguage } = useLanguage();
+  const { user, loading: authLoading } = useAuth();
   const navigate = useNavigate();
-  const [state, setState] = useState('Karnataka');
-  const [district, setDistrict] = useState('Belagavi');
+  const [state, setState] = useState('');
+  const [district, setDistrict] = useState('');
+  const [districtSearch, setDistrictSearch] = useState('');
+  const [showDistrictDropdown, setShowDistrictDropdown] = useState(false);
   const [selectedCrops, setSelectedCrops] = useState<string[]>(['cereals']);
+  const [detectingLocation, setDetectingLocation] = useState(false);
+
+  // Redirect to login if not authenticated
+  useEffect(() => {
+    if (!authLoading && !user) {
+      navigate('/', { replace: true });
+    }
+  }, [user, authLoading, navigate]);
+
+  const districts = useMemo(() => getDistricts(state), [state]);
+
+  const filteredDistricts = useMemo(() => {
+    if (!districtSearch) return districts;
+    return districts.filter(d =>
+      d.toLowerCase().includes(districtSearch.toLowerCase())
+    );
+  }, [districts, districtSearch]);
 
   const cropTypes = [
     { id: 'cereals', label: t('cerealsGrains'), icon: Wheat, desc: 'Rice, Wheat, Bajra...' },
@@ -20,6 +43,81 @@ const ProfileSetupPage: React.FC = () => {
   const toggleCrop = (id: string) => {
     setSelectedCrops(prev => prev.includes(id) ? prev.filter(c => c !== id) : [...prev, id]);
   };
+
+  const handleAutoDetect = () => {
+    if (!navigator.geolocation) {
+      toast.error('Geolocation is not supported by your browser');
+      return;
+    }
+
+    setDetectingLocation(true);
+    navigator.geolocation.getCurrentPosition(
+      async (position) => {
+        try {
+          const { latitude, longitude } = position.coords;
+          const response = await fetch(
+            `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&addressdetails=1&accept-language=en`
+          );
+          const data = await response.json();
+          const address = data.address;
+
+          if (address?.state) {
+            const matchedState = allStates.find(s =>
+              s.toLowerCase() === address.state.toLowerCase() ||
+              address.state.toLowerCase().includes(s.toLowerCase())
+            );
+            if (matchedState) {
+              setState(matchedState);
+              if (address.state_district || address.county) {
+                const detectedDistrict = address.state_district || address.county;
+                const stateDistricts = getDistricts(matchedState);
+                const matchedDistrict = stateDistricts.find(d =>
+                  d.toLowerCase() === detectedDistrict.toLowerCase() ||
+                  detectedDistrict.toLowerCase().includes(d.toLowerCase()) ||
+                  d.toLowerCase().includes(detectedDistrict.toLowerCase())
+                );
+                if (matchedDistrict) {
+                  setDistrict(matchedDistrict);
+                  setDistrictSearch(matchedDistrict);
+                }
+              }
+              toast.success(`Location detected: ${matchedState}`);
+            } else {
+              toast.info(`Detected: ${address.state}. Please select manually.`);
+            }
+          } else {
+            toast.error('Could not determine your state');
+          }
+        } catch {
+          toast.error('Failed to detect location');
+        }
+        setDetectingLocation(false);
+      },
+      (error) => {
+        setDetectingLocation(false);
+        if (error.code === error.PERMISSION_DENIED) {
+          toast.error('Location permission denied. Please select manually.');
+        } else {
+          toast.error('Could not detect your location');
+        }
+      },
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+  };
+
+  const selectDistrict = (d: string) => {
+    setDistrict(d);
+    setDistrictSearch(d);
+    setShowDistrictDropdown(false);
+  };
+
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <Loader2 className="w-8 h-8 animate-spin text-primary" />
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-background px-5 py-6 pb-8">
@@ -48,35 +146,76 @@ const ProfileSetupPage: React.FC = () => {
 
       {/* Location */}
       <div className="mt-5">
-        <label className="text-xs font-bold text-muted-foreground uppercase tracking-wider">{t('location')}</label>
+        <div className="flex items-center justify-between">
+          <label className="text-xs font-bold text-muted-foreground uppercase tracking-wider">{t('location')}</label>
+          <button
+            onClick={handleAutoDetect}
+            disabled={detectingLocation}
+            className="flex items-center gap-1 text-xs font-semibold text-primary hover:text-primary/80 transition-colors disabled:opacity-60"
+          >
+            {detectingLocation ? (
+              <Loader2 className="w-3 h-3 animate-spin" />
+            ) : (
+              <Locate className="w-3 h-3" />
+            )}
+            Auto Detect
+          </button>
+        </div>
         <div className="space-y-2 mt-2">
+          {/* State selector */}
           <div className="flex items-center gap-2 bg-secondary rounded-lg px-3 py-2.5">
             <MapPin className="w-4 h-4 text-primary" />
             <select
               value={state}
-              onChange={(e) => setState(e.target.value)}
+              onChange={(e) => {
+                setState(e.target.value);
+                setDistrict('');
+                setDistrictSearch('');
+              }}
               className="flex-1 bg-transparent text-sm text-foreground outline-none"
             >
-              <option value="Karnataka">Karnataka</option>
-              <option value="Tamil Nadu">Tamil Nadu</option>
-              <option value="Andhra Pradesh">Andhra Pradesh</option>
-              <option value="Kerala">Kerala</option>
-              <option value="Maharashtra">Maharashtra</option>
-              <option value="Telangana">Telangana</option>
-              <option value="Uttar Pradesh">Uttar Pradesh</option>
+              <option value="">Select State</option>
+              {allStates.map(s => (
+                <option key={s} value={s}>{s}</option>
+              ))}
             </select>
           </div>
-          <div className="flex items-center gap-2 bg-secondary rounded-lg px-3 py-2.5">
-            <MapPin className="w-4 h-4 text-primary" />
-            <select
-              value={district}
-              onChange={(e) => setDistrict(e.target.value)}
-              className="flex-1 bg-transparent text-sm text-foreground outline-none"
-            >
-              <option value="Belagavi">Belagavi</option>
-              <option value="Mysuru">Mysuru</option>
-              <option value="Dharwad">Dharwad</option>
-            </select>
+
+          {/* District searchable input */}
+          <div className="relative">
+            <div className="flex items-center gap-2 bg-secondary rounded-lg px-3 py-2.5">
+              <Search className="w-4 h-4 text-primary" />
+              <input
+                type="text"
+                placeholder={state ? 'Type or search district...' : 'Select state first'}
+                value={districtSearch}
+                onChange={(e) => {
+                  setDistrictSearch(e.target.value);
+                  setDistrict('');
+                  setShowDistrictDropdown(true);
+                }}
+                onFocus={() => state && setShowDistrictDropdown(true)}
+                disabled={!state}
+                className="flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground disabled:opacity-50"
+              />
+            </div>
+
+            {/* District dropdown */}
+            {showDistrictDropdown && filteredDistricts.length > 0 && (
+              <div className="absolute z-20 top-full left-0 right-0 mt-1 bg-card border border-border rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                {filteredDistricts.map(d => (
+                  <button
+                    key={d}
+                    onClick={() => selectDistrict(d)}
+                    className={`w-full text-left px-3 py-2 text-sm hover:bg-secondary transition-colors ${
+                      d === district ? 'text-primary font-semibold bg-primary/10' : 'text-foreground'
+                    }`}
+                  >
+                    {d}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       </div>
