@@ -115,7 +115,7 @@ const OnboardingPage: React.FC = () => {
   const handleGoogleLogin = async () => {
     setLoading(true);
     const result = await lovable.auth.signInWithOAuth("google", {
-      redirect_uri: window.location.origin + '/setup',
+      redirect_uri: window.location.origin,
     });
     if (result.error) {
       toast.error(String(result.error) || 'Google sign-in failed');
