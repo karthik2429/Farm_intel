@@ -204,6 +204,8 @@ const translations: Record<Language, TranslationKeys> = {
     changeDetails: 'Change details',
     verifyOtp: 'Verify OTP',
     createAndSendOtp: 'Create & Send OTP',
+    yourName: 'Your Name',
+    enterYourName: 'Enter your full name',
     namaste: 'Namaste',
     letsSetup: "Let's set up your profile to help you grow better",
     preferredLanguage: 'Preferred Language',
