@@ -990,6 +990,8 @@ const translations: Record<Language, TranslationKeys> = {
     changeDetails: 'تفصیلات تبدیل کریں',
     verifyOtp: 'OTP تصدیق کریں',
     createAndSendOtp: 'بنائیں اور OTP بھیجیں',
+    yourName: 'آپ کا نام',
+    enterYourName: 'اپنا پورا نام درج کریں',
     namaste: 'نمستے',
     letsSetup: 'بہتر اگانے کے لیے اپنا پروفائل سیٹ اپ کریں',
     preferredLanguage: 'پسندیدہ زبان',
