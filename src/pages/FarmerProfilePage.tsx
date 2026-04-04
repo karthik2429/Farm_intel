@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useLanguage } from '@/contexts/LanguageContext';
+import { useAuth } from '@/contexts/AuthContext';
 import { languageNames, Language } from '@/lib/i18n';
 import { allStates, getDistricts } from '@/lib/indian-locations';
 import {
@@ -12,6 +13,8 @@ import { toast } from 'sonner';
 
 const FarmerProfilePage: React.FC = () => {
   const { t, language, setLanguage } = useLanguage();
+  const { user } = useAuth();
+  const navigate = useNavigate();
   const navigate = useNavigate();
 
   // Editing state
