@@ -15,7 +15,6 @@ const FarmerProfilePage: React.FC = () => {
   const { t, language, setLanguage } = useLanguage();
   const { user } = useAuth();
   const navigate = useNavigate();
-  const navigate = useNavigate();
 
   // Editing state
   const [editingSection, setEditingSection] = useState<string | null>(null);
