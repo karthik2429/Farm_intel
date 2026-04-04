@@ -108,6 +108,14 @@ type TranslationKeys = {
   irrigation: string;
   marketPriceTrend: string;
   currentMandiAvg: string;
+  topCropRecommendations: string;
+  matchScore: string;
+  yieldLabel: string;
+  durationLabel: string;
+  waterNeeds: string;
+  selectThisCrop: string;
+  profitPerAcre: string;
+  season: string;
 
   // Market Mandi Prices
   mandiPrices: string;
