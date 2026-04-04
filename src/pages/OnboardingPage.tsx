@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
+import { lovable } from '@/integrations/lovable/index';
 import { ChevronRight, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import heroFarm from '@/assets/hero-farm.jpg';
@@ -69,30 +70,30 @@ const OnboardingPage: React.FC = () => {
 
   const handleGoogleLogin = async () => {
     setLoading(true);
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: 'google',
-      options: {
-        redirectTo: `${window.location.origin}/setup`,
-      },
+    const result = await lovable.auth.signInWithOAuth("google", {
+      redirect_uri: window.location.origin + '/setup',
     });
-    if (error) {
-      toast.error(error.message || 'Google sign-in failed');
+    if (result.error) {
+      toast.error(String(result.error) || 'Google sign-in failed');
       setLoading(false);
     }
+    if (result.redirected) return;
+    navigate('/setup');
+    setLoading(false);
   };
 
   const handleAppleLogin = async () => {
     setLoading(true);
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: 'apple',
-      options: {
-        redirectTo: `${window.location.origin}/setup`,
-      },
+    const result = await lovable.auth.signInWithOAuth("apple", {
+      redirect_uri: window.location.origin + '/setup',
     });
-    if (error) {
-      toast.error(error.message || 'Apple sign-in failed');
+    if (result.error) {
+      toast.error(String(result.error) || 'Apple sign-in failed');
       setLoading(false);
     }
+    if (result.redirected) return;
+    navigate('/setup');
+    setLoading(false);
   };
 
   return (
