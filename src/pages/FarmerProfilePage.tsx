@@ -19,12 +19,15 @@ const FarmerProfilePage: React.FC = () => {
   const [showLangPicker, setShowLangPicker] = useState(false);
 
   // Profile data (local state — you'll connect your backend later)
-  const [name, setName] = useState('Farmer');
-  const [state, setState] = useState('');
-  const [district, setDistrict] = useState('');
-  const [districtSearch, setDistrictSearch] = useState('');
+  const [name, setName] = useState(() => localStorage.getItem('profile_name') || '');
+  const [state, setState] = useState(() => localStorage.getItem('profile_state') || '');
+  const [district, setDistrict] = useState(() => localStorage.getItem('profile_district') || '');
+  const [districtSearch, setDistrictSearch] = useState(() => localStorage.getItem('profile_district') || '');
   const [showDistrictDropdown, setShowDistrictDropdown] = useState(false);
-  const [selectedCrops, setSelectedCrops] = useState<string[]>(['cereals']);
+  const [selectedCrops, setSelectedCrops] = useState<string[]>(() => {
+    const saved = localStorage.getItem('profile_crops');
+    return saved ? JSON.parse(saved) : ['cereals'];
+  });
   const [detectingLocation, setDetectingLocation] = useState(false);
 
   const districts = useMemo(() => getDistricts(state), [state]);
