@@ -1,15 +1,22 @@
 import React, { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useLanguage } from '@/contexts/LanguageContext';
-import { ArrowLeft, MapPin, FlaskConical, Navigation, ChevronDown, Search } from 'lucide-react';
+import { ArrowLeft, MapPin, Navigation } from 'lucide-react';
 import { allStates, getDistricts } from '@/lib/indian-locations';
 import { toast } from 'sonner';
 import BottomNav from '@/components/BottomNav';
+import { getCropRecommendations } from '@/lib/api';
+
+// 🔥 NEW IMPORTS
+import { getMarketPrice } from '@/lib/marketApi';
+import { mapCropName } from '@/lib/cropMap';
 
 const CropRecommendationsPage: React.FC = () => {
   const { t } = useLanguage();
   const navigate = useNavigate();
+
   const [season, setSeason] = useState('kharif');
+
   const [nitrogen, setNitrogen] = useState('');
   const [phosphorus, setPhosphorus] = useState('');
   const [potassium, setPotassium] = useState('');
@@ -17,217 +24,261 @@ const CropRecommendationsPage: React.FC = () => {
   const [rainfall, setRainfall] = useState('');
 
   const [locationMode, setLocationMode] = useState<'current' | 'custom'>('current');
+
   const [selectedState, setSelectedState] = useState('Karnataka');
   const [selectedDistrict, setSelectedDistrict] = useState('Belagavi');
-  const [districtSearch, setDistrictSearch] = useState('');
-  const [showDistrictDropdown, setShowDistrictDropdown] = useState(false);
+
   const [detectingLocation, setDetectingLocation] = useState(false);
+  const [coords, setCoords] = useState<{ lat: number; lon: number } | null>(null);
 
   const districts = useMemo(() => getDistricts(selectedState), [selectedState]);
-  const filteredDistricts = useMemo(
-    () => districts.filter(d => d.toLowerCase().includes(districtSearch.toLowerCase())),
-    [districts, districtSearch]
-  );
 
+  // 📍 AUTO LOCATION
   const handleAutoDetect = () => {
     setDetectingLocation(true);
-    if (!navigator.geolocation) {
-      toast.error('Geolocation not supported');
-      setDetectingLocation(false);
-      return;
-    }
+
     navigator.geolocation.getCurrentPosition(
-      async (pos) => {
-        try {
-          const res = await fetch(
-            `https://nominatim.openstreetmap.org/reverse?lat=${pos.coords.latitude}&lon=${pos.coords.longitude}&format=json&addressdetails=1`
-          );
-          const data = await res.json();
-          const detectedState = data.address?.state || '';
-          const detectedDistrict = data.address?.state_district || data.address?.county || '';
-          const matchedState = allStates.find(s => detectedState.toLowerCase().includes(s.toLowerCase()));
-          if (matchedState) {
-            setSelectedState(matchedState);
-            const dists = getDistricts(matchedState);
-            const matchedDist = dists.find(d => detectedDistrict.toLowerCase().includes(d.toLowerCase()));
-            if (matchedDist) setSelectedDistrict(matchedDist);
-            else if (dists.length > 0) setSelectedDistrict(dists[0]);
-          }
-          toast.success(`📍 ${detectedDistrict}, ${detectedState}`);
-        } catch {
-          toast.error('Could not detect location');
-        }
+      (pos) => {
+        setCoords({
+          lat: pos.coords.latitude,
+          lon: pos.coords.longitude,
+        });
+
+        toast.success("📍 Location detected");
         setDetectingLocation(false);
       },
-      () => { toast.error('Location access denied'); setDetectingLocation(false); }
+      () => {
+        toast.error("Location access denied");
+        setDetectingLocation(false);
+      }
     );
   };
 
-  const seasons = [
-    { id: 'kharif', label: t('kharif') },
-    { id: 'rabi', label: t('rabi') },
-  ];
+  // 🔥 ADD MARKET DATA
+  const enrichMarket = async (crops: any[], district: string) => {
+    return await Promise.all(
+      crops.map(async (crop) => {
+        const cropName = crop.name || crop[0];
+        const mapped = mapCropName(cropName);
+
+        const market = await getMarketPrice(mapped, district);
+
+        return {
+          ...crop,
+          mandiPrice: market?.modal || null,
+          mandiMin: market?.min || null,
+          mandiMax: market?.max || null,
+        };
+      })
+    );
+  };
+
+  // 🚀 FINAL LOGIC
+  const handleGetRecommendations = async () => {
+    try {
+      let payload: any = {
+        season,
+      };
+
+      // ✅ OPTIONAL FIELDS
+      if (nitrogen) payload.N = Number(nitrogen);
+      if (phosphorus) payload.P = Number(phosphorus);
+      if (potassium) payload.K = Number(potassium);
+      if (ph) payload.ph = Number(ph);
+      if (rainfall) payload.rainfall = Number(rainfall);
+
+      // ✅ LOCATION REQUIRED
+      if (locationMode === 'current') {
+        if (!coords) {
+          toast.error("Click Auto Detect first");
+          return;
+        }
+
+        payload.lat = coords.lat;
+        payload.lon = coords.lon;
+        payload.mode = "coords";
+      } else {
+        if (!selectedDistrict) {
+          toast.error("Select district");
+          return;
+        }
+
+        payload.state = selectedState;
+        payload.district = selectedDistrict;
+        payload.mode = "auto";
+      }
+
+      console.log("FINAL PAYLOAD:", payload);
+
+      const data = await getCropRecommendations(payload);
+
+      console.log("API RESPONSE:", data);
+
+      if (!data || data.detail) {
+        toast.error("Backend validation failed");
+        return;
+      }
+
+      // 🔥 EXTRACT CROPS
+      const crops = data["Top Crops"] || [];
+
+      if (!crops.length) {
+        toast.error("No crops found");
+        return;
+      }
+
+      // 🔥 ADD MARKET DATA
+      const enriched = await enrichMarket(
+        crops.slice(0, 3),
+        selectedDistrict
+      );
+
+      console.log("ENRICHED:", enriched);
+
+      // 🚀 NAVIGATE
+      navigate('/crop-detail', {
+        state: { crops: enriched }
+      });
+
+    } catch (err) {
+      console.error(err);
+      toast.error("Something went wrong");
+    }
+  };
 
   return (
     <div className="min-h-screen bg-background pb-20">
+
+      {/* HEADER */}
       <div className="px-5 pt-5 pb-3 flex items-center gap-3">
         <button onClick={() => navigate(-1)} className="w-8 h-8 rounded-full bg-secondary flex items-center justify-center">
           <ArrowLeft className="w-4 h-4 text-foreground" />
         </button>
-        <h1 className="text-lg font-extrabold text-foreground">{t('cropAdvisor')}</h1>
+        <h1 className="text-lg font-extrabold text-foreground">Crop AI Advisor</h1>
       </div>
 
       <div className="px-5 space-y-4">
-        {/* Location */}
+
+        {/* LOCATION */}
         <div className="glass-card p-4 space-y-3">
-          <div className="flex items-center justify-between">
+          <div className="flex justify-between items-center">
             <div className="flex items-center gap-2">
               <MapPin className="w-4 h-4 text-primary" />
-              <span className="text-xs font-bold text-muted-foreground">{t('chooseLocation')}</span>
+              <span className="text-xs font-bold text-muted-foreground">Choose Location</span>
             </div>
+
             <button
               onClick={handleAutoDetect}
-              disabled={detectingLocation}
-              className="flex items-center gap-1 text-[10px] font-bold text-primary bg-primary/10 px-2.5 py-1 rounded-full"
+              className="text-xs font-bold text-primary bg-primary/10 px-3 py-1 rounded-full flex items-center gap-1"
             >
               <Navigation className="w-3 h-3" />
-              {detectingLocation ? '...' : t('autoDetect')}
+              {detectingLocation ? "..." : "Auto Detect"}
             </button>
           </div>
 
-          {/* Mode toggle */}
           <div className="flex gap-2">
             <button
               onClick={() => setLocationMode('current')}
-              className={`flex-1 py-2 rounded-lg text-xs font-semibold transition-all ${
-                locationMode === 'current' ? 'gradient-primary text-primary-foreground' : 'bg-secondary text-secondary-foreground'
+              className={`flex-1 py-2 rounded-lg ${
+                locationMode === 'current'
+                  ? 'gradient-primary text-white'
+                  : 'bg-secondary'
               }`}
             >
-              {t('useCurrentLocation')}
+              Use Current Location
             </button>
+
             <button
               onClick={() => setLocationMode('custom')}
-              className={`flex-1 py-2 rounded-lg text-xs font-semibold transition-all ${
-                locationMode === 'custom' ? 'gradient-primary text-primary-foreground' : 'bg-secondary text-secondary-foreground'
+              className={`flex-1 py-2 rounded-lg ${
+                locationMode === 'custom'
+                  ? 'gradient-primary text-white'
+                  : 'bg-secondary'
               }`}
             >
-              {t('selectDistrict')}
+              Select District
             </button>
           </div>
 
           {locationMode === 'current' ? (
-            <p className="text-sm font-semibold text-foreground">{selectedDistrict}, {selectedState}</p>
+            <p className="text-sm font-semibold">
+              {coords ? "Location detected" : "No location"}
+            </p>
           ) : (
             <div className="space-y-2">
               <select
                 value={selectedState}
-                onChange={(e) => {
-                  setSelectedState(e.target.value);
-                  const d = getDistricts(e.target.value);
-                  setSelectedDistrict(d[0] || '');
-                  setDistrictSearch('');
-                }}
-                className="w-full bg-secondary rounded-lg px-3 py-2.5 text-sm text-foreground outline-none"
+                onChange={(e) => setSelectedState(e.target.value)}
+                className="w-full bg-secondary rounded px-3 py-2"
               >
-                {allStates.map(s => <option key={s} value={s}>{s}</option>)}
+                {allStates.map(s => (
+                  <option key={s}>{s}</option>
+                ))}
               </select>
-              <div className="relative">
-                <div className="flex items-center bg-secondary rounded-lg px-3">
-                  <Search className="w-3.5 h-3.5 text-muted-foreground" />
-                  <input
-                    type="text"
-                    value={districtSearch || selectedDistrict}
-                    onChange={(e) => { setDistrictSearch(e.target.value); setShowDistrictDropdown(true); }}
-                    onFocus={() => setShowDistrictDropdown(true)}
-                    placeholder={t('selectDistrict')}
-                    className="w-full bg-transparent py-2.5 px-2 text-sm text-foreground outline-none"
-                  />
-                </div>
-                {showDistrictDropdown && filteredDistricts.length > 0 && (
-                  <div className="absolute z-20 top-full left-0 right-0 mt-1 bg-card border border-border rounded-lg max-h-40 overflow-y-auto">
-                    {filteredDistricts.map(d => (
-                      <button
-                        key={d}
-                        onClick={() => { setSelectedDistrict(d); setDistrictSearch(''); setShowDistrictDropdown(false); }}
-                        className="w-full text-left px-3 py-2 text-sm text-foreground hover:bg-secondary transition-colors"
-                      >
-                        {d}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
+
+              <select
+                value={selectedDistrict}
+                onChange={(e) => setSelectedDistrict(e.target.value)}
+                className="w-full bg-secondary rounded px-3 py-2"
+              >
+                {districts.map(d => (
+                  <option key={d}>{d}</option>
+                ))}
+              </select>
             </div>
           )}
         </div>
 
-        {/* Season */}
+        {/* SEASON */}
         <div>
-          <label className="text-xs font-bold text-muted-foreground uppercase tracking-wider">{t('selectSeason')}</label>
+          <p className="text-xs font-bold text-muted-foreground">SELECT SEASON</p>
           <div className="flex gap-2 mt-2">
-            {seasons.map((s) => (
-              <button
-                key={s.id}
-                onClick={() => setSeason(s.id)}
-                className={`flex-1 py-2.5 rounded-lg text-sm font-semibold transition-all ${
-                  season === s.id ? 'gradient-primary text-primary-foreground' : 'bg-secondary text-secondary-foreground'
-                }`}
-              >
-                {s.label}
-              </button>
-            ))}
+            <button
+              onClick={() => setSeason('kharif')}
+              className={`flex-1 py-2 rounded-lg ${
+                season === 'kharif' ? 'gradient-primary text-white' : 'bg-secondary'
+              }`}
+            >
+              Kharif
+            </button>
+
+            <button
+              onClick={() => setSeason('rabi')}
+              className={`flex-1 py-2 rounded-lg ${
+                season === 'rabi' ? 'gradient-primary text-white' : 'bg-secondary'
+              }`}
+            >
+              Rabi
+            </button>
           </div>
         </div>
 
-        {/* Soil Composition */}
+        {/* SOIL */}
         <div>
-          <label className="text-xs font-bold text-muted-foreground uppercase tracking-wider">{t('soilComposition')}</label>
+          <label className="text-xs font-bold text-muted-foreground uppercase">
+            SOIL COMPOSITION (OPTIONAL)
+          </label>
+
           <div className="grid grid-cols-3 gap-2 mt-2">
-            {[
-              { label: t('nitrogen'), value: nitrogen, set: setNitrogen },
-              { label: t('phosphorus'), value: phosphorus, set: setPhosphorus },
-              { label: t('potassium'), value: potassium, set: setPotassium },
-            ].map((item) => (
-              <div key={item.label} className="glass-card p-3">
-                <p className="text-[10px] text-muted-foreground mb-1">{item.label}</p>
-                <input
-                  type="number"
-                  value={item.value}
-                  onChange={(e) => item.set(e.target.value)}
-                  className="w-full bg-secondary rounded px-2 py-1.5 text-sm text-foreground outline-none"
-                />
-              </div>
-            ))}
+            <input placeholder="Nitrogen (N)" value={nitrogen} onChange={(e)=>setNitrogen(e.target.value)} className="input"/>
+            <input placeholder="Phosphorus (P)" value={phosphorus} onChange={(e)=>setPhosphorus(e.target.value)} className="input"/>
+            <input placeholder="Potassium (K)" value={potassium} onChange={(e)=>setPotassium(e.target.value)} className="input"/>
           </div>
+
           <div className="grid grid-cols-2 gap-2 mt-2">
-            <div className="glass-card p-3">
-              <p className="text-[10px] text-muted-foreground mb-1">{t('phLevel')}</p>
-              <input
-                type="number"
-                step="0.1"
-                value={ph}
-                onChange={(e) => setPh(e.target.value)}
-                className="w-full bg-secondary rounded px-2 py-1.5 text-sm text-foreground outline-none"
-              />
-            </div>
-            <div className="glass-card p-3">
-              <p className="text-[10px] text-muted-foreground mb-1">{t('rainfall')}</p>
-              <input
-                type="number"
-                value={rainfall}
-                onChange={(e) => setRainfall(e.target.value)}
-                className="w-full bg-secondary rounded px-2 py-1.5 text-sm text-foreground outline-none"
-              />
-            </div>
+            <input placeholder="pH Level" value={ph} onChange={(e)=>setPh(e.target.value)} className="input"/>
+            <input placeholder="Rainfall" value={rainfall} onChange={(e)=>setRainfall(e.target.value)} className="input"/>
           </div>
         </div>
 
+        {/* BUTTON */}
         <button
-          onClick={() => navigate('/crop-detail')}
-          className="w-full gradient-primary text-primary-foreground py-3 rounded-xl font-bold text-sm hover:opacity-90 transition-opacity"
+          onClick={handleGetRecommendations}
+          className="w-full gradient-primary py-3 rounded-xl font-bold"
         >
-          {t('getRecommendations')}
+          Get Recommendations
         </button>
+
       </div>
 
       <BottomNav />

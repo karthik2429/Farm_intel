@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useAuth } from '@/contexts/AuthContext';
@@ -7,25 +7,93 @@ import BottomNav from '@/components/BottomNav';
 import cropRice from '@/assets/crop-rice.jpg';
 import cropCotton from '@/assets/crop-cotton.jpg';
 import cropSugarcane from '@/assets/crop-sugarcane.jpg';
+import { getCropRecommendations } from '@/lib/api';
 
 const HomeDashboard: React.FC = () => {
+
   const { t } = useLanguage();
   const { user } = useAuth();
   const navigate = useNavigate();
 
-  const userName = user?.user_metadata?.full_name || user?.user_metadata?.name || localStorage.getItem('profile_name') || '';
+  const userName =
+    user?.user_metadata?.full_name ||
+    user?.user_metadata?.name ||
+    localStorage.getItem('profile_name') ||
+    '';
 
+  const [recommendations, setRecommendations] = useState<any[]>([]);
+
+  useEffect(() => {
+    console.log("Dashboard useEffect running"); // ✅ MUST SHOW
+
+    const fetchData = async (lat: number, lon: number) => {
+      try {
+        console.log("Fetching with:", lat, lon);
+
+        const payload = {
+          lat,
+          lon,
+          season: "kharif",
+          mode: "coords"
+        };
+
+        const data = await getCropRecommendations(payload);
+
+        console.log("DASHBOARD RESPONSE:", data); // 🔥
+
+        if (!data || !data["Top Crops"]) {
+          console.log("No data from backend");
+          return;
+        }
+
+        const mapped = data["Top Crops"].map((c: any, i: number) => {
+          const name = c[0];
+          const score = Math.round(c[1] * 100);
+
+          return {
+            name: name.charAt(0).toUpperCase() + name.slice(1),
+            period:
+              i === 0 ? '4 Months • High Water' :
+              i === 1 ? '10-18 Months • High Water' :
+              '6 Months • Medium Water',
+            score: `+${score}%`,
+            img:
+              name === "rice" ? cropRice :
+              name === "sugarcane" ? cropSugarcane :
+              cropCotton
+          };
+        });
+
+        setRecommendations(mapped);
+
+      } catch (err) {
+        console.error("API ERROR:", err);
+      }
+    };
+
+    // ✅ TRY LOCATION
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          console.log("Location success"); // ✅
+          fetchData(pos.coords.latitude, pos.coords.longitude);
+        },
+        (err) => {
+          console.log("Location failed → using fallback"); // ✅
+          fetchData(15.8497, 74.4977); // 🔥 fallback (Belagavi)
+        }
+      );
+    } else {
+      console.log("No geolocation → fallback"); // ✅
+      fetchData(15.8497, 74.4977);
+    }
+
+  }, []);
   const smartActions = [
-    { icon: Sprout, label: t('cropRecs'), desc: t('aiBasedSelection'), color: 'text-primary', path: '/crop-recommendations' },
-    { icon: TrendingUp, label: t('market'), desc: t('livePrediction'), color: 'text-primary', path: '/market' },
-    { icon: RotateCcw, label: t('rotation'), desc: t('soilHealthLoss'), color: 'text-primary', path: '/crop-rotation' },
-    { icon: Brain, label: t('predict'), desc: t('priceForcast'), color: 'text-primary', path: '/price-prediction' },
-  ];
-
-  const recommendations = [
-    { name: 'Sugarcane', period: '10-18 Months • High Water', score: '+18%', img: cropSugarcane },
-    { name: 'Cotton', period: '6 Months • Medium Water', score: '+12%', img: cropCotton },
-    { name: 'Rice (Basmati)', period: '4 Months • High Water', score: '+8%', img: cropRice },
+    { icon: Sprout, label: t('cropRecs'), path: '/crop-recommendations' },
+    { icon: TrendingUp, label: t('market'), path: '/market' },
+    { icon: RotateCcw, label: t('rotation'), path: '/crop-rotation' },
+    { icon: Brain, label: t('predict'), path: '/price-prediction' },
   ];
 
   return (
@@ -34,16 +102,24 @@ const HomeDashboard: React.FC = () => {
       <div className="px-5 pt-5 pb-3">
         <div className="flex items-center justify-between">
           <div>
-            <p className="text-xs text-muted-foreground">{t('namaste')}{userName ? `, ${userName}` : ''}</p>
-            <h1 className="text-lg font-extrabold text-foreground">🌾 {t('appName')}</h1>
+            <p className="text-xs text-muted-foreground">
+              {t('namaste')}
+              {userName ? `, ${userName}` : ''}
+            </p>
+            <h1 className="text-lg font-extrabold text-foreground">
+              🌾 {t('appName')}
+            </h1>
           </div>
-          <button onClick={() => navigate('/profile')} className="w-9 h-9 rounded-full bg-secondary flex items-center justify-center">
-            <span className="text-sm">👤</span>
+          <button
+            onClick={() => navigate('/profile')}
+            className="w-9 h-9 rounded-full bg-secondary flex items-center justify-center"
+          >
+            👤
           </button>
         </div>
       </div>
 
-      {/* Weather Card */}
+      {/* Weather */}
       <div className="px-5 mb-4">
         <div className="glass-card p-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -66,88 +142,63 @@ const HomeDashboard: React.FC = () => {
         </div>
       </div>
 
-      {/* AI Smart Actions */}
+      {/* Actions */}
       <div className="px-5 mb-4">
-        <div className="flex items-center justify-between mb-3">
-          <h2 className="text-sm font-bold text-foreground">{t('aiSmartActions')}</h2>
-          <button className="text-xs text-primary font-semibold">{t('viewAll')}</button>
-        </div>
+        <h2 className="text-sm font-bold text-foreground mb-3">
+          {t('aiSmartActions')}
+        </h2>
         <div className="grid grid-cols-4 gap-2">
-          {smartActions.map((action, i) => (
+          {smartActions.map((a, i) => (
             <button
               key={i}
-              onClick={() => navigate(action.path)}
-              className="glass-card p-3 flex flex-col items-center gap-2 hover:bg-primary/5 transition-colors"
+              onClick={() => navigate(a.path)}
+              className="glass-card p-3 flex flex-col items-center gap-2"
             >
-              <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center">
-                <action.icon className={`w-5 h-5 ${action.color}`} />
-              </div>
-              <p className="text-[10px] font-bold text-foreground text-center leading-tight">{action.label}</p>
-              <p className="text-[8px] text-muted-foreground text-center">{action.desc}</p>
+              <a.icon className="w-5 h-5 text-primary" />
+              <p className="text-[10px] font-bold text-foreground text-center">
+                {a.label}
+              </p>
             </button>
           ))}
         </div>
       </div>
 
-      {/* Market Trend Mini Chart */}
+      {/* Recommendations */}
       <div className="px-5 mb-4">
-        <div className="glass-card p-4">
-          <div className="flex items-center justify-between mb-2">
-            <p className="text-xs font-bold text-foreground">Onion (Nashik Mandi)</p>
-            <span className="text-xs text-primary font-bold">+8.5%</span>
-          </div>
-          <div className="h-12 flex items-end gap-1">
-            {[40, 55, 45, 65, 50, 70, 60, 80, 75, 90, 85, 95].map((h, i) => (
-              <div
-                key={i}
-                className="flex-1 rounded-t bg-primary/30"
-                style={{ height: `${h}%` }}
-              />
-            ))}
-          </div>
-        </div>
-      </div>
+        <h2 className="text-sm font-bold text-foreground mb-3">
+          {t('topRecommendations')}
+        </h2>
 
-      {/* Top Recommendations */}
-      <div className="px-5 mb-4">
-        <div className="flex items-center justify-between mb-3">
-          <h2 className="text-sm font-bold text-foreground">{t('topRecommendations')}</h2>
-        </div>
-        <div className="space-y-2">
-          {recommendations.map((rec, i) => (
+      <div className="space-y-2">
+        {recommendations.length === 0 ? (
+          <p className="text-xs text-muted-foreground">Loading...</p>
+        ) : (
+          recommendations.map((rec, i) => (
             <button
               key={i}
               onClick={() => navigate('/crop-detail')}
-              className="w-full glass-card p-3 flex items-center gap-3 hover:bg-primary/5 transition-colors"
+              className="w-full glass-card p-3 flex items-center gap-3"
             >
-              <img src={rec.img} alt={rec.name} className="w-11 h-11 rounded-lg object-cover" loading="lazy" width={44} height={44} />
+              <img
+                src={rec.img}
+                className="w-11 h-11 rounded-lg object-cover"
+              />
               <div className="flex-1 text-left">
-                <p className="text-sm font-bold text-foreground">{rec.name}</p>
-                <p className="text-[10px] text-muted-foreground">{rec.period}</p>
+                <p className="text-sm font-bold text-foreground">
+                  {rec.name}
+                </p>
+                <p className="text-[10px] text-muted-foreground">
+                  {rec.period}
+                </p>
               </div>
-              <span className="text-xs font-bold text-primary">{rec.score}</span>
-              <ChevronRight className="w-4 h-4 text-muted-foreground" />
+              <span className="text-xs font-bold text-primary">
+                {rec.score}
+              </span>
             </button>
-          ))}
-        </div>
+          ))
+        )}
       </div>
-
-      {/* Ask AI */}
-      <div className="px-5">
-        <button
-          onClick={() => navigate('/ai-chat')}
-          className="w-full glass-card p-4 flex items-center gap-3 hover:bg-primary/5 transition-colors"
-        >
-          <div className="w-10 h-10 rounded-full gradient-primary flex items-center justify-center">
-            <Brain className="w-5 h-5 text-primary-foreground" />
-          </div>
-          <div className="flex-1 text-left">
-            <p className="text-sm font-bold text-foreground">{t('askAgroSmartAi')}</p>
-            <p className="text-[10px] text-muted-foreground">{t('askInLanguage')}</p>
-          </div>
-          <ChevronRight className="w-4 h-4 text-muted-foreground" />
-        </button>
-      </div>
+    </div>
 
       <BottomNav />
     </div>

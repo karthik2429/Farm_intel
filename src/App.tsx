@@ -13,6 +13,7 @@ import CropDetailPage from "./pages/CropDetailPage";
 import MarketPricesPage from "./pages/MarketPricesPage";
 import PricePredictionPage from "./pages/PricePredictionPage";
 import CropRotationPage from "./pages/CropRotationPage";
+import FertilizerRecommendationPage from "./pages/FertilizerRecommendationPage";
 import AIChatPage from "./pages/AIChatPage";
 import FarmerProfilePage from "./pages/FarmerProfilePage";
 import MarketplacePage from "./pages/MarketplacePage";
@@ -38,6 +39,7 @@ const App = () => (
                 <Route path="/market" element={<MarketPricesPage />} />
                 <Route path="/price-prediction" element={<PricePredictionPage />} />
                 <Route path="/crop-rotation" element={<CropRotationPage />} />
+                <Route path="/fertilizer" element={<FertilizerRecommendationPage />} />
                 <Route path="/crops" element={<CropRecommendationsPage />} />
                 <Route path="/ai-chat" element={<AIChatPage />} />
                 <Route path="/profile" element={<FarmerProfilePage />} />

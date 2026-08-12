@@ -1,88 +1,58 @@
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useLanguage } from '@/contexts/LanguageContext';
-import { ArrowLeft, Droplets, Thermometer, Layers, TrendingUp, Clock, Sprout, IndianRupee, ChevronDown, ChevronUp } from 'lucide-react';
+import { ArrowLeft, Droplets, Thermometer, Layers, TrendingUp, Clock, IndianRupee, ChevronDown, ChevronUp } from 'lucide-react';
 import BottomNav from '@/components/BottomNav';
 import cropRice from '@/assets/crop-rice.jpg';
 import cropCotton from '@/assets/crop-cotton.jpg';
 import cropSugarcane from '@/assets/crop-sugarcane.jpg';
 
-interface CropData {
-  id: string;
-  name: string;
-  variety: string;
-  image: string;
-  matchScore: number;
-  season: string;
-  duration: string;
-  yield: string;
-  waterNeeds: string;
-  profitPerAcre: string;
-  mandiPrice: string;
-  priceData: number[];
-  soilType: string;
-  temperature: string;
-  irrigation: string;
-}
-
 const CropDetailPage: React.FC = () => {
   const { t } = useLanguage();
   const navigate = useNavigate();
+  const location = useLocation();
+
   const [selectedCrop, setSelectedCrop] = useState<string | null>(null);
 
-  const crops: CropData[] = [
-    {
-      id: 'rice',
-      name: 'Basmati Rice',
-      variety: 'Pusa-1121',
-      image: cropRice,
-      matchScore: 95,
-      season: 'Kharif',
-      duration: '120 Days',
-      yield: '4.8 t/ha',
-      waterNeeds: 'High',
-      profitPerAcre: '₹32,000',
-      mandiPrice: '₹4,250 / Quintal',
+  // ✅ NEW DATA FORMAT (FROM PREVIOUS PAGE)
+  const cropsData = location.state?.crops || [];
+
+  // 🔥 MAP DATA
+  const crops = cropsData.map((crop: any, index: number) => {
+    const name = crop.name || crop[0];
+    const score = crop.matchScore || Math.round((crop[1] || 0.8) * 100);
+
+    return {
+      id: name,
+      name: name.charAt(0).toUpperCase() + name.slice(1),
+
+      image:
+        name === "rice"
+          ? cropRice
+          : name === "sugarcane"
+          ? cropSugarcane
+          : cropCotton,
+
+      matchScore: score,
+
+      duration: index === 0 ? "120 Days" : index === 1 ? "300 Days" : "150 Days",
+      yield: index === 0 ? "4.8 t/ha" : index === 1 ? "80 t/ha" : "2.5 t/ha",
+      waterNeeds: index === 0 ? "High" : index === 1 ? "Very High" : "Medium",
+
+      profitPerAcre: "₹30,000",
+
+      // 🔥 REAL API DATA
+      mandiPrice: crop.mandiPrice,
+      mandiMin: crop.mandiMin,
+      mandiMax: crop.mandiMax,
+
       priceData: [30, 45, 40, 55, 50, 60, 55, 70, 65, 80, 75, 85],
-      soilType: 'Loamy, well-drained (Sandy Loam, Clay Loam)',
-      temperature: '20°C - 35°C ideal range',
-      irrigation: 'Standing water (5-10cm) during vegetative phase',
-    },
-    {
-      id: 'sugarcane',
-      name: 'Sugarcane',
-      variety: 'Co-0238',
-      image: cropSugarcane,
-      matchScore: 87,
-      season: 'Kharif',
-      duration: '300 Days',
-      yield: '80 t/ha',
-      waterNeeds: 'Very High',
-      profitPerAcre: '₹55,000',
-      mandiPrice: '₹3,150 / Quintal',
-      priceData: [40, 42, 45, 48, 50, 55, 52, 58, 60, 62, 65, 70],
-      soilType: 'Deep rich loamy soil with good drainage',
-      temperature: '21°C - 27°C optimal',
-      irrigation: 'Furrow irrigation every 10-15 days',
-    },
-    {
-      id: 'cotton',
-      name: 'Cotton',
-      variety: 'Bt Cotton (Bollgard II)',
-      image: cropCotton,
-      matchScore: 78,
-      season: 'Kharif',
-      duration: '150 Days',
-      yield: '2.5 t/ha',
-      waterNeeds: 'Medium',
-      profitPerAcre: '₹28,000',
-      mandiPrice: '₹6,800 / Quintal',
-      priceData: [50, 48, 55, 60, 58, 65, 62, 70, 68, 75, 72, 80],
-      soilType: 'Black cotton soil, well-drained alluvial',
-      temperature: '21°C - 30°C during growth',
-      irrigation: 'Drip irrigation preferred, moderate water',
-    },
-  ];
+
+      soilType: "Suitable soil conditions",
+      temperature: "20°C - 35°C",
+      irrigation: "Moderate irrigation required",
+    };
+  });
 
   const getScoreColor = (score: number) => {
     if (score >= 90) return 'text-green-500';
@@ -98,163 +68,160 @@ const CropDetailPage: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-background pb-20">
-      {/* Header */}
+      
+      {/* HEADER */}
       <div className="px-5 pt-5 pb-3 flex items-center gap-3">
         <button onClick={() => navigate(-1)} className="w-8 h-8 rounded-full bg-secondary flex items-center justify-center">
           <ArrowLeft className="w-4 h-4 text-foreground" />
         </button>
         <div>
-          <h1 className="text-lg font-extrabold text-foreground">{t('topCropRecommendations')}</h1>
-          <p className="text-[10px] text-muted-foreground">Based on your soil, location & season</p>
+          <h1 className="text-lg font-extrabold text-foreground">
+            {t('topCropRecommendations')}
+          </h1>
+          <p className="text-[10px] text-muted-foreground">
+            Based on your soil, location & season
+          </p>
         </div>
       </div>
 
       <div className="px-5 space-y-4">
-        {/* Top 3 Crop Cards */}
+
+        {/* CARDS */}
         {crops.map((crop, index) => {
           const isExpanded = selectedCrop === crop.id;
+
           return (
             <div
               key={crop.id}
-              className={`glass-card overflow-hidden transition-all duration-300 ${
+              className={`glass-card overflow-hidden ${
                 isExpanded ? 'ring-2 ring-primary/50' : ''
               }`}
             >
-              {/* Card Header - Always Visible */}
+
+              {/* CLICK AREA */}
               <button
                 onClick={() => setSelectedCrop(isExpanded ? null : crop.id)}
                 className="w-full text-left"
               >
                 <div className="flex gap-3 p-4">
-                  {/* Rank Badge */}
-                  <div className="relative flex-shrink-0">
+
+                  {/* IMAGE */}
+                  <div className="relative">
                     <img
                       src={crop.image}
-                      alt={crop.name}
                       className="w-16 h-16 rounded-xl object-cover"
-                      width={64}
-                      height={64}
                     />
-                    <div className="absolute -top-1.5 -left-1.5 w-6 h-6 rounded-full gradient-primary flex items-center justify-center">
-                      <span className="text-[10px] font-black text-primary-foreground">#{index + 1}</span>
+                    <div className="absolute -top-1 -left-1 w-6 h-6 rounded-full gradient-primary flex items-center justify-center text-[10px] font-bold text-white">
+                      #{index + 1}
                     </div>
                   </div>
 
-                  {/* Crop Info */}
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-start justify-between">
+                  {/* INFO */}
+                  <div className="flex-1">
+                    <div className="flex justify-between">
                       <div>
-                        <h3 className="text-sm font-extrabold text-foreground">{crop.name}</h3>
-                        <p className="text-[10px] text-muted-foreground">{crop.variety}</p>
+                        <h3 className="text-sm font-bold">{crop.name}</h3>
+                        <p className="text-[10px] text-muted-foreground">
+                          Recommended Variety
+                        </p>
                       </div>
-                      <div className={`px-2 py-1 rounded-lg border ${getScoreBg(crop.matchScore)}`}>
-                        <span className={`text-xs font-black ${getScoreColor(crop.matchScore)}`}>
+
+                      <div className={`px-2 py-1 rounded ${getScoreBg(crop.matchScore)}`}>
+                        <span className={`text-xs font-bold ${getScoreColor(crop.matchScore)}`}>
                           {crop.matchScore}%
                         </span>
                       </div>
                     </div>
 
-                    {/* Quick Stats */}
-                    <div className="flex gap-3 mt-2">
-                      <div className="flex items-center gap-1">
+                    {/* STATS */}
+                    <div className="flex gap-3 mt-2 text-[10px]">
+                      <span className="flex items-center gap-1">
                         <TrendingUp className="w-3 h-3 text-primary" />
-                        <span className="text-[10px] text-muted-foreground">{crop.yield}</span>
-                      </div>
-                      <div className="flex items-center gap-1">
+                        {crop.yield}
+                      </span>
+                      <span className="flex items-center gap-1">
                         <Clock className="w-3 h-3 text-primary" />
-                        <span className="text-[10px] text-muted-foreground">{crop.duration}</span>
-                      </div>
-                      <div className="flex items-center gap-1">
+                        {crop.duration}
+                      </span>
+                      <span className="flex items-center gap-1">
                         <Droplets className="w-3 h-3 text-primary" />
-                        <span className="text-[10px] text-muted-foreground">{crop.waterNeeds}</span>
-                      </div>
+                        {crop.waterNeeds}
+                      </span>
                     </div>
                   </div>
 
-                  {/* Expand indicator */}
+                  {/* ARROW */}
                   <div className="flex items-center">
-                    {isExpanded ? (
-                      <ChevronUp className="w-4 h-4 text-muted-foreground" />
-                    ) : (
-                      <ChevronDown className="w-4 h-4 text-muted-foreground" />
-                    )}
+                    {isExpanded ? <ChevronUp /> : <ChevronDown />}
                   </div>
                 </div>
 
-                {/* Price Strip */}
-                <div className="px-4 pb-3 flex items-center justify-between">
-                  <div className="flex items-center gap-1.5">
-                    <IndianRupee className="w-3 h-3 text-primary" />
-                    <span className="text-[10px] text-muted-foreground">{t('currentMandiAvg')}</span>
-                  </div>
-                  <span className="text-xs font-bold text-primary">{crop.mandiPrice}</span>
+                {/* 🔥 MANDI PRICE (REAL DATA) */}
+                <div className="px-4 pb-3 flex justify-between">
+                  <span className="text-[10px] text-muted-foreground">
+                    ₹ Current Mandi Avg
+                  </span>
+
+                  <span className="text-xs font-bold text-primary">
+                    ₹ {crop.mandiPrice ? crop.mandiPrice : "--"} / Quintal
+                  </span>
                 </div>
+
+                {/* 🔥 MIN MAX */}
+                {crop.mandiMin && (
+                  <div className="px-4 pb-2 text-[10px] text-muted-foreground">
+                    ₹{crop.mandiMin} - ₹{crop.mandiMax}
+                  </div>
+                )}
               </button>
 
-              {/* Expanded Details */}
+              {/* EXPANDED */}
               {isExpanded && (
-                <div className="border-t border-border/50 px-4 pb-4 space-y-4 animate-in slide-in-from-top-2 duration-200">
-                  {/* Market Price Chart */}
-                  <div className="pt-3">
-                    <h4 className="text-xs font-bold text-foreground mb-2">{t('marketPriceTrend')}</h4>
-                    <div className="h-16 flex items-end gap-[3px]">
+                <div className="px-4 pb-4 space-y-3">
+
+                  {/* GRAPH */}
+                  <div>
+                    <h4 className="text-xs font-bold mb-2">Market Price Trend</h4>
+                    <div className="h-16 flex gap-1 items-end">
                       {crop.priceData.map((h, i) => (
                         <div
                           key={i}
-                          className="flex-1 rounded-t transition-all"
-                          style={{
-                            height: `${h}%`,
-                            background: i === crop.priceData.length - 1
-                              ? 'hsl(152 65% 45%)'
-                              : 'hsl(152 65% 45% / 0.25)',
-                          }}
+                          className="flex-1 bg-primary/20 rounded-t"
+                          style={{ height: `${h}%` }}
                         />
                       ))}
                     </div>
-                    <div className="flex justify-between text-[9px] text-muted-foreground mt-1">
-                      <span>Jan</span><span>Jun</span><span>Dec</span>
+                  </div>
+
+                  {/* PROFIT */}
+                  <div className="flex justify-between bg-primary/10 p-3 rounded-lg">
+                    <span className="text-xs">Profit / Acre</span>
+                    <span className="font-bold text-primary">{crop.profitPerAcre}</span>
+                  </div>
+
+                  {/* REQUIREMENTS */}
+                  <div className="space-y-2">
+                    <div className="flex gap-2 text-xs">
+                      <Layers className="w-4 h-4 text-primary" />
+                      {crop.soilType}
+                    </div>
+                    <div className="flex gap-2 text-xs">
+                      <Thermometer className="w-4 h-4 text-primary" />
+                      {crop.temperature}
+                    </div>
+                    <div className="flex gap-2 text-xs">
+                      <Droplets className="w-4 h-4 text-primary" />
+                      {crop.irrigation}
                     </div>
                   </div>
 
-                  {/* Profit Highlight */}
-                  <div className="flex items-center justify-between bg-primary/5 rounded-xl p-3">
-                    <span className="text-xs font-semibold text-foreground">{t('profitPerAcre')}</span>
-                    <span className="text-sm font-black text-primary">{crop.profitPerAcre}</span>
-                  </div>
-
-                  {/* Cultivation Requirements */}
-                  <div>
-                    <h4 className="text-xs font-bold text-foreground mb-2">{t('cultivationRequirements')}</h4>
-                    <div className="space-y-2">
-                      {[
-                        { icon: Layers, label: t('soilType'), value: crop.soilType },
-                        { icon: Thermometer, label: t('temperature'), value: crop.temperature },
-                        { icon: Droplets, label: t('irrigation'), value: crop.irrigation },
-                      ].map((req, i) => (
-                        <div key={i} className="flex gap-2.5 items-start">
-                          <div className="w-7 h-7 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0">
-                            <req.icon className="w-3.5 h-3.5 text-primary" />
-                          </div>
-                          <div>
-                            <p className="text-[10px] font-bold text-foreground">{req.label}</p>
-                            <p className="text-[9px] text-muted-foreground leading-relaxed">{req.value}</p>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Select Button */}
                   <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      // This is where the user's model will be connected
-                      navigate('/price-prediction');
-                    }}
-                    className="w-full gradient-primary text-primary-foreground py-2.5 rounded-xl font-bold text-sm hover:opacity-90 transition-opacity"
+                    onClick={() => navigate('/price-prediction')}
+                    className="w-full gradient-primary py-2 rounded-lg font-bold"
                   >
-                    {t('selectThisCrop')} →
+                    Select This Crop →
                   </button>
+
                 </div>
               )}
             </div>

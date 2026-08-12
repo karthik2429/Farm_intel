@@ -1,7 +1,7 @@
 import React from 'react';
 
 import { useNavigate, useLocation } from 'react-router-dom';
-import { Home, TrendingUp, Bot, Sprout, ShoppingCart } from 'lucide-react';
+import { Home, TrendingUp, Bot, Sprout, ShoppingCart, Leaf, TestTube } from 'lucide-react';
 import { useLanguage } from '@/contexts/LanguageContext';
 
 const BottomNav: React.FC = () => {
@@ -12,8 +12,10 @@ const BottomNav: React.FC = () => {
   const tabs = [
     { path: '/home', icon: Home, label: t('home') },
     { path: '/market', icon: TrendingUp, label: t('marketNav') },
-    { path: '/ai-chat', icon: Bot, label: t('aiApp') },
     { path: '/crops', icon: Sprout, label: t('crops') },
+    { path: '/crop-rotation', icon: Leaf, label: 'Rotation' },
+    { path: '/fertilizer', icon: TestTube, label: 'Fertilizer' },
+    { path: '/ai-chat', icon: Bot, label: t('aiApp') },
     { path: '/marketplace', icon: ShoppingCart, label: t('marketplace') },
   ];
 
