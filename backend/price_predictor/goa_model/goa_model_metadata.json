@@ -1,0 +1,706 @@
+{
+  "xgb": {
+    "feature_cols": [
+      "commodity_code",
+      "max_price",
+      "min_price",
+      "modal_price",
+      "arrival_tonnes",
+      "year",
+      "month",
+      "day",
+      "day_of_week",
+      "day_of_year",
+      "week_of_year",
+      "quarter",
+      "is_weekend",
+      "is_monsoon",
+      "is_post_monsoon",
+      "is_winter",
+      "is_summer",
+      "month_sin",
+      "month_cos",
+      "day_sin",
+      "day_cos",
+      "is_carnival",
+      "is_shigmo",
+      "is_ganesh_chaturthi",
+      "is_diwali",
+      "is_christmas",
+      "is_new_year",
+      "is_sao_joao",
+      "festival_intensity",
+      "is_kharif_harvest",
+      "is_rabi_harvest",
+      "temp_max_est",
+      "temp_min_est",
+      "temp_avg_est",
+      "temp_range_est",
+      "rainfall_est",
+      "humidity_est",
+      "heat_stress",
+      "cold_stress",
+      "drought_stress",
+      "flood_risk",
+      "rainfall_ma7",
+      "humidity_ma7",
+      "temp_avg_ma7",
+      "rainfall_ma30",
+      "humidity_ma30",
+      "temp_avg_ma30",
+      "price_lag_1",
+      "price_lag_2",
+      "price_lag_3",
+      "price_lag_7",
+      "price_lag_14",
+      "price_lag_30",
+      "price_ma_3",
+      "price_std_3",
+      "price_min_3",
+      "price_max_3",
+      "price_momentum_3",
+      "price_cv_3",
+      "price_ma_7",
+      "price_std_7",
+      "price_min_7",
+      "price_max_7",
+      "price_momentum_7",
+      "price_cv_7",
+      "price_ma_14",
+      "price_std_14",
+      "price_min_14",
+      "price_max_14",
+      "price_momentum_14",
+      "price_cv_14",
+      "price_ma_30",
+      "price_std_30",
+      "price_min_30",
+      "price_max_30",
+      "price_momentum_30",
+      "price_cv_30",
+      "price_change_1d",
+      "price_change_7d",
+      "price_change_14d",
+      "arrival_lag_1",
+      "arrival_lag_7",
+      "arrival_lag_14",
+      "arrival_ma_7",
+      "arrival_sum_7",
+      "arrival_ma_14",
+      "arrival_sum_14",
+      "arrival_ma_30",
+      "arrival_sum_30",
+      "supply_pressure",
+      "supply_pressure_7d",
+      "price_spread",
+      "price_spread_pct",
+      "is_perishable",
+      "is_storage",
+      "is_cereals",
+      "is_pulses",
+      "is_oilseeds",
+      "is_spices",
+      "perishability_score",
+      "cereal_kharif",
+      "cereal_rabi",
+      "pulse_kharif",
+      "pulse_rabi",
+      "district_enc",
+      "commodity_enc",
+      "variety_enc",
+      "grade_enc",
+      "market_enc",
+      "season_enc"
+    ],
+    "encoders": {
+      "district": "LabelEncoder()",
+      "commodity": "LabelEncoder()",
+      "variety": "LabelEncoder()",
+      "grade": "LabelEncoder()",
+      "market": "LabelEncoder()",
+      "season": "LabelEncoder()"
+    },
+    "params": {
+      "objective": "reg:squarederror",
+      "n_estimators": 500,
+      "max_depth": 8,
+      "learning_rate": 0.05,
+      "subsample": 0.8,
+      "colsample_bytree": 0.8,
+      "random_state": 42,
+      "n_jobs": -1,
+      "early_stopping_rounds": 50
+    },
+    "metrics": {
+      "mae": 0.16548601891956544,
+      "rmse": 0.2811007147569904,
+      "r2": 0.08714435514639063,
+      "mape": 152.4997466071427
+    },
+    "feature_importance": [
+      {
+        "feature": "min_price",
+        "importance": 0.10779502242803574
+      },
+      {
+        "feature": "price_spread",
+        "importance": 0.08825758099555969
+      },
+      {
+        "feature": "price_change_1d",
+        "importance": 0.048060789704322815
+      },
+      {
+        "feature": "price_min_30",
+        "importance": 0.04178059101104736
+      },
+      {
+        "feature": "month_cos",
+        "importance": 0.03445319086313248
+      },
+      {
+        "feature": "price_spread_pct",
+        "importance": 0.033382847905159
+      },
+      {
+        "feature": "price_change_7d",
+        "importance": 0.02712947316467762
+      },
+      {
+        "feature": "temp_avg_ma30",
+        "importance": 0.026444965973496437
+      },
+      {
+        "feature": "price_lag_14",
+        "importance": 0.02433282881975174
+      },
+      {
+        "feature": "price_min_14",
+        "importance": 0.017191119492053986
+      },
+      {
+        "feature": "price_cv_30",
+        "importance": 0.016794642433524132
+      },
+      {
+        "feature": "flood_risk",
+        "importance": 0.015746718272566795
+      },
+      {
+        "feature": "price_min_3",
+        "importance": 0.015573755837976933
+      },
+      {
+        "feature": "price_cv_14",
+        "importance": 0.01465111505240202
+      },
+      {
+        "feature": "price_max_14",
+        "importance": 0.013873903080821037
+      },
+      {
+        "feature": "price_cv_3",
+        "importance": 0.013867512345314026
+      },
+      {
+        "feature": "price_ma_14",
+        "importance": 0.013787846080958843
+      },
+      {
+        "feature": "price_cv_7",
+        "importance": 0.013761702924966812
+      },
+      {
+        "feature": "price_momentum_7",
+        "importance": 0.013496075756847858
+      },
+      {
+        "feature": "price_std_30",
+        "importance": 0.012554069049656391
+      },
+      {
+        "feature": "is_carnival",
+        "importance": 0.012510976754128933
+      },
+      {
+        "feature": "price_change_14d",
+        "importance": 0.012464880011975765
+      },
+      {
+        "feature": "is_monsoon",
+        "importance": 0.012327589094638824
+      },
+      {
+        "feature": "price_max_30",
+        "importance": 0.011017599143087864
+      },
+      {
+        "feature": "price_std_7",
+        "importance": 0.010645459406077862
+      },
+      {
+        "feature": "price_max_7",
+        "importance": 0.010490722954273224
+      },
+      {
+        "feature": "variety_enc",
+        "importance": 0.010431405156850815
+      },
+      {
+        "feature": "commodity_enc",
+        "importance": 0.010365605354309082
+      },
+      {
+        "feature": "day_of_year",
+        "importance": 0.010172797366976738
+      },
+      {
+        "feature": "price_min_7",
+        "importance": 0.009535274468362331
+      },
+      {
+        "feature": "price_lag_30",
+        "importance": 0.00934450514614582
+      },
+      {
+        "feature": "humidity_ma30",
+        "importance": 0.009157287888228893
+      },
+      {
+        "feature": "day_cos",
+        "importance": 0.008801868185400963
+      },
+      {
+        "feature": "price_std_14",
+        "importance": 0.008696421049535275
+      },
+      {
+        "feature": "arrival_sum_14",
+        "importance": 0.008500540629029274
+      },
+      {
+        "feature": "arrival_ma_30",
+        "importance": 0.008297736756503582
+      },
+      {
+        "feature": "price_momentum_30",
+        "importance": 0.008144736289978027
+      },
+      {
+        "feature": "temp_avg_ma7",
+        "importance": 0.0077973767183721066
+      },
+      {
+        "feature": "price_momentum_14",
+        "importance": 0.007778818253427744
+      },
+      {
+        "feature": "humidity_ma7",
+        "importance": 0.0076323384419083595
+      },
+      {
+        "feature": "price_lag_2",
+        "importance": 0.0076189287938177586
+      },
+      {
+        "feature": "price_ma_30",
+        "importance": 0.007587915752083063
+      },
+      {
+        "feature": "price_ma_7",
+        "importance": 0.007363679353147745
+      },
+      {
+        "feature": "price_momentum_3",
+        "importance": 0.007345926947891712
+      },
+      {
+        "feature": "grade_enc",
+        "importance": 0.007061467505991459
+      },
+      {
+        "feature": "price_ma_3",
+        "importance": 0.006935318000614643
+      },
+      {
+        "feature": "week_of_year",
+        "importance": 0.006663774140179157
+      },
+      {
+        "feature": "rainfall_ma30",
+        "importance": 0.006583805195987225
+      },
+      {
+        "feature": "max_price",
+        "importance": 0.006542347837239504
+      },
+      {
+        "feature": "price_max_3",
+        "importance": 0.006504401098936796
+      },
+      {
+        "feature": "arrival_sum_30",
+        "importance": 0.006496169604361057
+      },
+      {
+        "feature": "day_sin",
+        "importance": 0.006436219904571772
+      },
+      {
+        "feature": "modal_price",
+        "importance": 0.006148921325802803
+      },
+      {
+        "feature": "arrival_sum_7",
+        "importance": 0.005440972279757261
+      },
+      {
+        "feature": "is_post_monsoon",
+        "importance": 0.005351204890757799
+      },
+      {
+        "feature": "market_enc",
+        "importance": 0.005130650009959936
+      },
+      {
+        "feature": "arrival_ma_7",
+        "importance": 0.005113566759973764
+      },
+      {
+        "feature": "arrival_lag_14",
+        "importance": 0.0050964741967618465
+      },
+      {
+        "feature": "price_std_3",
+        "importance": 0.004962347913533449
+      },
+      {
+        "feature": "temp_range_est",
+        "importance": 0.004807749297469854
+      },
+      {
+        "feature": "price_lag_7",
+        "importance": 0.004700683057308197
+      },
+      {
+        "feature": "supply_pressure_7d",
+        "importance": 0.004541272297501564
+      },
+      {
+        "feature": "arrival_ma_14",
+        "importance": 0.004451382905244827
+      },
+      {
+        "feature": "temp_max_est",
+        "importance": 0.004323591478168964
+      },
+      {
+        "feature": "day",
+        "importance": 0.004191636107861996
+      },
+      {
+        "feature": "rainfall_ma7",
+        "importance": 0.004150846973061562
+      },
+      {
+        "feature": "month_sin",
+        "importance": 0.004065115936100483
+      },
+      {
+        "feature": "year",
+        "importance": 0.004020714201033115
+      },
+      {
+        "feature": "arrival_lag_1",
+        "importance": 0.003940939903259277
+      },
+      {
+        "feature": "commodity_code",
+        "importance": 0.0037054158747196198
+      },
+      {
+        "feature": "arrival_lag_7",
+        "importance": 0.003540659788995981
+      },
+      {
+        "feature": "price_lag_1",
+        "importance": 0.0034422881435602903
+      },
+      {
+        "feature": "month",
+        "importance": 0.003402127418667078
+      },
+      {
+        "feature": "rainfall_est",
+        "importance": 0.0033870923798531294
+      },
+      {
+        "feature": "price_lag_3",
+        "importance": 0.0033500827848911285
+      },
+      {
+        "feature": "day_of_week",
+        "importance": 0.0031643924303352833
+      },
+      {
+        "feature": "is_diwali",
+        "importance": 0.0031415477860718966
+      },
+      {
+        "feature": "humidity_est",
+        "importance": 0.0030928649939596653
+      },
+      {
+        "feature": "is_ganesh_chaturthi",
+        "importance": 0.0030218143947422504
+      },
+      {
+        "feature": "is_summer",
+        "importance": 0.0029119164682924747
+      },
+      {
+        "feature": "supply_pressure",
+        "importance": 0.0025355892721563578
+      },
+      {
+        "feature": "drought_stress",
+        "importance": 0.0024550382513552904
+      },
+      {
+        "feature": "is_sao_joao",
+        "importance": 0.0024474370293319225
+      },
+      {
+        "feature": "festival_intensity",
+        "importance": 0.0023872803431004286
+      },
+      {
+        "feature": "is_winter",
+        "importance": 0.0013651847839355469
+      },
+      {
+        "feature": "arrival_tonnes",
+        "importance": 0.0012910253135487437
+      },
+      {
+        "feature": "is_weekend",
+        "importance": 0.0007307383930310607
+      },
+      {
+        "feature": "is_kharif_harvest",
+        "importance": 0.0
+      },
+      {
+        "feature": "cereal_kharif",
+        "importance": 0.0
+      },
+      {
+        "feature": "cereal_rabi",
+        "importance": 0.0
+      },
+      {
+        "feature": "pulse_kharif",
+        "importance": 0.0
+      },
+      {
+        "feature": "district_enc",
+        "importance": 0.0
+      },
+      {
+        "feature": "pulse_rabi",
+        "importance": 0.0
+      },
+      {
+        "feature": "is_spices",
+        "importance": 0.0
+      },
+      {
+        "feature": "quarter",
+        "importance": 0.0
+      },
+      {
+        "feature": "cold_stress",
+        "importance": 0.0
+      },
+      {
+        "feature": "perishability_score",
+        "importance": 0.0
+      },
+      {
+        "feature": "is_cereals",
+        "importance": 0.0
+      },
+      {
+        "feature": "is_oilseeds",
+        "importance": 0.0
+      },
+      {
+        "feature": "is_pulses",
+        "importance": 0.0
+      },
+      {
+        "feature": "is_rabi_harvest",
+        "importance": 0.0
+      },
+      {
+        "feature": "is_storage",
+        "importance": 0.0
+      },
+      {
+        "feature": "is_perishable",
+        "importance": 0.0
+      },
+      {
+        "feature": "heat_stress",
+        "importance": 0.0
+      },
+      {
+        "feature": "is_shigmo",
+        "importance": 0.0
+      },
+      {
+        "feature": "temp_avg_est",
+        "importance": 0.0
+      },
+      {
+        "feature": "temp_min_est",
+        "importance": 0.0
+      },
+      {
+        "feature": "is_christmas",
+        "importance": 0.0
+      },
+      {
+        "feature": "is_new_year",
+        "importance": 0.0
+      },
+      {
+        "feature": "season_enc",
+        "importance": 0.0
+      }
+    ],
+    "trained_at": "2026-07-13T10:17:42.136486",
+    "n_train_samples": 8406,
+    "model_type": "XGBoost"
+  },
+  "lstm": null,
+  "feature_cols": [
+    "commodity_code",
+    "max_price",
+    "min_price",
+    "modal_price",
+    "arrival_tonnes",
+    "year",
+    "month",
+    "day",
+    "day_of_week",
+    "day_of_year",
+    "week_of_year",
+    "quarter",
+    "is_weekend",
+    "is_monsoon",
+    "is_post_monsoon",
+    "is_winter",
+    "is_summer",
+    "month_sin",
+    "month_cos",
+    "day_sin",
+    "day_cos",
+    "is_carnival",
+    "is_shigmo",
+    "is_ganesh_chaturthi",
+    "is_diwali",
+    "is_christmas",
+    "is_new_year",
+    "is_sao_joao",
+    "festival_intensity",
+    "is_kharif_harvest",
+    "is_rabi_harvest",
+    "temp_max_est",
+    "temp_min_est",
+    "temp_avg_est",
+    "temp_range_est",
+    "rainfall_est",
+    "humidity_est",
+    "heat_stress",
+    "cold_stress",
+    "drought_stress",
+    "flood_risk",
+    "rainfall_ma7",
+    "humidity_ma7",
+    "temp_avg_ma7",
+    "rainfall_ma30",
+    "humidity_ma30",
+    "temp_avg_ma30",
+    "price_lag_1",
+    "price_lag_2",
+    "price_lag_3",
+    "price_lag_7",
+    "price_lag_14",
+    "price_lag_30",
+    "price_ma_3",
+    "price_std_3",
+    "price_min_3",
+    "price_max_3",
+    "price_momentum_3",
+    "price_cv_3",
+    "price_ma_7",
+    "price_std_7",
+    "price_min_7",
+    "price_max_7",
+    "price_momentum_7",
+    "price_cv_7",
+    "price_ma_14",
+    "price_std_14",
+    "price_min_14",
+    "price_max_14",
+    "price_momentum_14",
+    "price_cv_14",
+    "price_ma_30",
+    "price_std_30",
+    "price_min_30",
+    "price_max_30",
+    "price_momentum_30",
+    "price_cv_30",
+    "price_change_1d",
+    "price_change_7d",
+    "price_change_14d",
+    "arrival_lag_1",
+    "arrival_lag_7",
+    "arrival_lag_14",
+    "arrival_ma_7",
+    "arrival_sum_7",
+    "arrival_ma_14",
+    "arrival_sum_14",
+    "arrival_ma_30",
+    "arrival_sum_30",
+    "supply_pressure",
+    "supply_pressure_7d",
+    "price_spread",
+    "price_spread_pct",
+    "is_perishable",
+    "is_storage",
+    "is_cereals",
+    "is_pulses",
+    "is_oilseeds",
+    "is_spices",
+    "perishability_score",
+    "cereal_kharif",
+    "cereal_rabi",
+    "pulse_kharif",
+    "pulse_rabi",
+    "district_enc",
+    "commodity_enc",
+    "variety_enc",
+    "grade_enc",
+    "market_enc",
+    "season_enc"
+  ],
+  "n_commodities": 20,
+  "n_markets": 9,
+  "date_range": {
+    "start": "2024-07-13 00:00:00",
+    "end": "2026-07-03 00:00:00"
+  },
+  "trained_at": "2026-07-13T10:17:42.158718"
+}

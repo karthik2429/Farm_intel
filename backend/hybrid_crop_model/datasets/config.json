@@ -1,0 +1,1 @@
+{"rf_weight": 0.8, "xgb_weight": 0.2, "agro_weight": 0.45, "yield_weight": 0.35, "area_weight": 0.2}
