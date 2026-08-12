@@ -1,7 +1,7 @@
 const BASE_URL =
   "https://api.data.gov.in/resource/9ef84268-d588-465a-a308-a864a43d0070";
 
-const API_KEY = "579b464db66ec23bdd0000010b138cdcddfa47526650163ba46d0b07"; // 🔴 replace
+const API_KEY = import.meta.env.VITE_GOV_API_KEY || "YOUR_GOVERNMENT_API_KEY_HERE"; // 🔴 replace
 
 // 🔥 DISTRICT NORMALIZATION (VERY IMPORTANT)
 const districtMap: Record<string, string> = {
