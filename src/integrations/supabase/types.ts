@@ -14,7 +14,59 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      marketplace_listings: {
+        Row: {
+          id: string
+          product: string
+          quantity: string
+          price: number
+          unit: string
+          category: string
+          description: string | null
+          district: string | null
+          seller: string
+          phone: string
+          created_by: string
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          product: string
+          quantity: string
+          price: number
+          unit?: string
+          category?: string
+          description?: string | null
+          district?: string | null
+          seller: string
+          phone: string
+          created_by: string
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          product?: string
+          quantity?: string
+          price?: number
+          unit?: string
+          category?: string
+          description?: string | null
+          district?: string | null
+          seller?: string
+          phone?: string
+          created_by?: string
+          created_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "marketplace_listings_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          }
+        ]
+      }
     }
     Views: {
       [_ in never]: never
