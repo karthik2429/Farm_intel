@@ -28,29 +28,53 @@ const OnboardingPage: React.FC = () => {
     if (user) navigate('/home', { replace: true });
   }, [user, navigate]);
 
-  // Fake OTP - no real backend verification
+  // Real Supabase passwordless auth. Any provider failure (disabled email
+  // provider, SMS provider not configured, wrong code, rate limit) is
+  // surfaced honestly - the UI never fakes a sent code or a valid login.
   const handleSendEmailOtp = async () => {
     if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       toast.error('Please enter a valid email address');
       return;
     }
     setLoading(true);
-    await new Promise((r) => setTimeout(r, 800));
-    setOtpSent(true);
-    toast.success('OTP sent to your email! (Enter any 6 digits)');
-    setLoading(false);
+    try {
+      const { error } = await supabase.auth.signInWithOtp({ email });
+      if (error) {
+        toast.error(error.message || 'Could not send the email code');
+      } else {
+        setOtpSent(true);
+        toast.success('Code sent — check your email inbox');
+      }
+    } catch (err: any) {
+      toast.error(err?.message || 'Network error while sending the code');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleVerifyEmailOtp = async () => {
     if (otp.length < 6) {
-      toast.error('Please enter the 6-digit OTP');
+      toast.error('Please enter the 6-digit code');
       return;
     }
     setLoading(true);
-    await new Promise((r) => setTimeout(r, 600));
-    toast.success(mode === 'signup' ? 'Account created!' : 'Logged in!');
-    setLoading(false);
-    navigate(mode === 'signup' ? '/setup' : '/home');
+    try {
+      const { error } = await supabase.auth.verifyOtp({
+        email,
+        token: otp,
+        type: 'email',
+      });
+      if (error) {
+        toast.error(error.message || 'Invalid or expired code');
+      } else {
+        toast.success(mode === 'signup' ? 'Account created!' : 'Logged in!');
+        navigate(mode === 'signup' ? '/setup' : '/home');
+      }
+    } catch (err: any) {
+      toast.error(err?.message || 'Verification failed');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleSendPhoneOtp = async () => {
@@ -60,22 +84,48 @@ const OnboardingPage: React.FC = () => {
       return;
     }
     setLoading(true);
-    await new Promise((r) => setTimeout(r, 800));
-    setOtpSent(true);
-    toast.success('OTP sent to your phone! (Enter any 6 digits)');
-    setLoading(false);
+    try {
+      const { error } = await supabase.auth.signInWithOtp({
+        phone: `+91${cleaned}`,
+      });
+      if (error) {
+        toast.error(error.message || 'Phone sign-in unavailable — check the SMS provider config or use email');
+      } else {
+        setOtpSent(true);
+        toast.success('Code sent to your phone');
+      }
+    } catch (err: any) {
+      toast.error(err?.message || 'Network error while sending the code');
+    } finally {
+      setLoading(false);
+    }
   };
 
+  // A real session means verifyOtp succeeded; fall back to explicit
+  // verifyOtp for the case the effect has not fired yet.
   const handleVerifyPhoneOtp = async () => {
     if (otp.length < 6) {
-      toast.error('Please enter the 6-digit OTP');
+      toast.error('Please enter the 6-digit code');
       return;
     }
     setLoading(true);
-    await new Promise((r) => setTimeout(r, 600));
-    toast.success(mode === 'signup' ? 'Account created!' : 'Logged in!');
-    setLoading(false);
-    navigate(mode === 'signup' ? '/setup' : '/home');
+    try {
+      const { error } = await supabase.auth.verifyOtp({
+        phone: `+91${phone}`,
+        token: otp,
+        type: 'sms',
+      });
+      if (error) {
+        toast.error(error.message || 'Invalid or expired code');
+      } else {
+        toast.success(mode === 'signup' ? 'Account created!' : 'Logged in!');
+        navigate(mode === 'signup' ? '/setup' : '/home');
+      }
+    } catch (err: any) {
+      toast.error(err?.message || 'Verification failed');
+    } finally {
+      setLoading(false);
+    }
   };
 
 
