@@ -138,3 +138,78 @@ export const getMarketPrice = async (
   inflight.set(key, p);
   return p;
 };
+
+export interface HistoryPoint {
+  date: string;
+  price: number;
+}
+export interface MarketHistory {
+  commodity: string;
+  district: string | null;
+  days: number;
+  /** how far the scope drill-down went to find real history */
+  scope: "district" | "state" | "india";
+  points: HistoryPoint[];
+  note?: string;
+}
+
+export interface CropInfo {
+  requested: string;
+  canonical?: string;
+  /** true when neither the master dataset nor the reference table has it */
+  unavailable?: boolean;
+  family?: string | null;
+  season?: string | null;
+  soil_type?: string | null;
+  ph_range?: string | null;
+  temp_range_c?: string | null;
+  rainfall_range_mm?: string | null;
+  ideal_npk?: { N: number | null; P: number | null; K: number | null } | null;
+  duration_days?: [number, number] | null;
+  yield_t_ha?: [number, number] | null;
+  water_needs?: string | null;
+  perennial?: boolean;
+  maturity_note?: string | null;
+}
+
+/** Real daily mandi history for a trend chart (empty points = no real data).
+ *  The backend resolves AGMARKNET commodity aliases itself. */
+export const getMarketHistory = (
+  commodity: string,
+  district?: string,
+  days = 90,
+): Promise<MarketHistory | null> => {
+  const params = new URLSearchParams({
+    commodity,
+    days: String(days),
+  });
+  if (district) params.set("district", normalizeDistrict(district));
+  return fetchJson(`${API_BASE}/market/history?${params}`, 10000);
+};
+
+/** Agronomy metadata (duration/yield/soil/...). null on any failure. */
+export const getCropInfo = (
+  crops: string[],
+): Promise<{ crops: Record<string, CropInfo> } | null> =>
+  fetchJson(`${API_BASE}/crop/info?crops=${encodeURIComponent(crops.join(","))}`, 10000);
+
+/** Current weather for the dashboard card. null on any failure. */
+export const getWeather = (loc: {
+  district?: string;
+  state?: string;
+  lat?: number;
+  lon?: number;
+}): Promise<{
+  district: string | null;
+  state: string | null;
+  temperature: number;
+  humidity: number;
+  rainfall: number;
+  source: string;
+} | null> => {
+  const params = new URLSearchParams();
+  if (loc.lat != null) { params.set("lat", String(loc.lat)); params.set("lon", String(loc.lon)); }
+  if (loc.district) params.set("district", loc.district);
+  if (loc.state) params.set("state", loc.state);
+  return fetchJson(`${API_BASE}/weather?${params}`, 10000);
+};

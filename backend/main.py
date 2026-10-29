@@ -38,6 +38,8 @@ import price_engine  # noqa: E402
 import district_data  # noqa: E402
 import mandi_prices  # noqa: E402
 import price_forecast  # noqa: E402
+import crop_info  # noqa: E402
+import price_store  # noqa: E402
 
 app = FastAPI(title="FarmIntel API", version="3.0.0")
 
@@ -602,6 +604,89 @@ async def market_price(commodity: str, district: Optional[str] = None,
 @app.get("/market/status")
 async def market_status():
     return mandi_prices.status()
+
+
+@app.get("/market/history")
+async def market_history(commodity: str, district: Optional[str] = None,
+                         state: Optional[str] = None, days: int = 90):
+    """
+    Real daily mandi price series (mean modal price across markets in scope)
+    from the local price store, with the same commodity resolution and
+    scope drill-down as the forecast (district → state → India). Used to
+    draw the crop-page price trend. When the store has nothing for the
+    scope, `points` is empty and the frontend shows an honest message
+    instead of a fabricated chart.
+    """
+    days = max(7, min(int(days), 365))
+    resolved = mandi_prices.resolve_commodity(commodity) or commodity
+    def _series(d, s):
+        df = price_store.history(resolved, district=d, state=s,
+                                 years=max(0.35, days / 365 * 1.4))
+        if df is None or df.empty:
+            return None
+        g = (df.groupby("date")["modal_price"].mean()
+               .round(1).reset_index())
+        if g.empty:
+            return None
+        g = g.tail(days)
+        return [{"date": r["date"].strftime("%Y-%m-%d"),"price": float(r["modal_price"])}
+                for _, r in g.iterrows()]
+    points = _series(district, state)
+    scope = "district"
+    if not points and not state and district:
+        state = price_store.state_for_district(district)  # resolve state from the district
+        if state:
+            points, scope = _series(None, state), "state"
+    if not points and district and state:
+        points, scope = _series(None, state), "state"
+    if not points:
+        points, scope = _series(None, None), "india"
+    if not points:
+        return {"commodity": resolved, "district": district, "days": days,
+                "points": [], "scope": scope,
+                "note": "No real mandi history for this scope yet — "
+                        "accruing via daily ingestion."}
+    return {
+        "commodity": resolved,
+        "district": district,
+        "days": days,
+        "scope": scope,
+        "points": points,
+    }
+
+
+@app.get("/weather")
+async def weather(district: Optional[str] = None, state: Optional[str] = None,
+                  lat: Optional[float] = None, lon: Optional[float] = None):
+    """
+    Live current weather for the resolved location (Open-Meteo). Used by
+    HomeDashboard instead of a hardcoded card. Coordinates win over district
+    names, matching /predict location resolution.
+    """
+    rlat, rlon = _resolve_coords(district, lat, lon, "auto", state=state)
+    temp, humidity, rainfall = _weather_or_default(rlat, rlon)
+    known = district_data.resolve_district(district, state, rlat, rlon)
+    return {
+        "district": (known or {}).get("district") or district,
+        "state": (known or {}).get("state") or state,
+        "temperature": round(float(temp), 1),
+        "humidity": round(float(humidity), 1),
+        "rainfall": round(float(rainfall), 1),
+        "source": "open_meteo" if (rlat is not None and rlon is not None)
+                  else "national_fallback",
+    }
+
+
+@app.get("/crop/info")
+async def crop_information(crops: str):
+    """Real agronomy (duration, yield, soil, pH/temp/rainfall ranges) for
+    the requested crops, joined from the bundled crop master dataset and
+    standard published references. Unknown crops come back flagged so the
+    UI never substitutes fabricated defaults."""
+    names = [c for c in (crops or "").split(",") if c.strip()]
+    if not names:
+        return {"crops": {}}
+    return {"crops": crop_info.get_crop_info(names[:20])}
 
 
 # ─────────────────────── Price prediction ────────────────────────────────

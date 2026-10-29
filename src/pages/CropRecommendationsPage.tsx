@@ -144,9 +144,13 @@ const CropRecommendationsPage: React.FC = () => {
 
       console.log("ENRICHED:", enriched);
 
-      // 🚀 NAVIGATE
+      // 🚀 NAVIGATE (carry the resolved district so the detail page can
+      // fetch scoped price history for the trend chart)
       navigate('/crop-detail', {
-        state: { crops: enriched }
+        state: {
+          crops: enriched,
+          district: data.district || selectedDistrict,
+        }
       });
 
     } catch (err) {

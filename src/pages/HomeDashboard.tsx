@@ -9,10 +9,25 @@ import cropCotton from '@/assets/crop-cotton.jpg';
 import cropSugarcane from '@/assets/crop-sugarcane.jpg';
 import { getCropRecommendations } from '@/lib/api';
 import { allStates, getDistricts } from '@/lib/indian-locations';
+import { getCropInfo, getWeather, type CropInfo } from '@/lib/marketApi';
 
 // "bengaluru urban" -> "Bengaluru Urban" (backend resolves names lowercase)
 const prettyName = (s?: string | null) =>
   s ? s.replace(/\b\w/g, (c) => c.toUpperCase()) : '';
+
+// Real duration/water text from /crop/info — or null when unknown, so the
+// dashboard never invents a growth period for a crop.
+const periodFromInfo = (info?: CropInfo | null) => {
+  const d = info?.duration_days;
+  if (!d || d[0] <= 0 || d[1] <= 0) {
+    if (info?.maturity_note) return info.maturity_note;
+    return info?.water_needs ? `· ${info.water_needs.toLowerCase()} water` : null;
+  }
+  const m1 = Math.round(d[0] / 30.4);
+  const m2 = Math.round(d[1] / 30.4);
+  const months = m1 === m2 ? `${m1} months` : `${m1}-${m2} months`;
+  return info?.water_needs ? `${months} • ${info.water_needs.toLowerCase()} water` : months;
+};
 
 const HomeDashboard: React.FC = () => {
 
@@ -36,11 +51,15 @@ const HomeDashboard: React.FC = () => {
   const [showLocPicker, setShowLocPicker] = useState(false);
   const [locVersion, setLocVersion] = useState(0); // bump to refetch
   interface RecRow {
-    name: string; district: string; period: string;
+    name: string; district: string; period: null;
     score: string; img: string;
   }
   const [recommendations, setRecommendations] = useState<RecRow[]>([]);
   const [loadingRecs, setLoadingRecs] = useState(true);
+  const [recsInfo, setRecsInfo] = useState<Record<string, CropInfo | null>>({});
+  const [weather, setWeather] = useState<{
+    temperature: number; humidity: number; rainfall: number; source: string;
+  } | null>(null);
 
   // Resolve initial location once: profile first, then GPS auto-detect.
   // If both fail we don't guess a district - we ask the user to pick one.
@@ -103,11 +122,20 @@ const HomeDashboard: React.FC = () => {
           payload.state = locState;
           payload.district = locDistrict;
           payload.mode = "auto";
-        } else {
-          return; // no usable location yet
-        }
+      } else {
+        return; // no usable location yet
+      }
 
-        const data = await getCropRecommendations(payload);
+      // Live weather (Open-Meteo): coords for GPS, district for manual/profile.
+      getWeather(
+        locSource === 'gps' && locCoords
+          ? { lat: locCoords.lat, lon: locCoords.lon }
+          : { district: prettyName(locDistrict), state: prettyName(locState) },
+      )
+        .then((w) => setWeather(w))
+        .catch(() => setWeather(null));
+
+      const data = await getCropRecommendations(payload);
 
         if (!data || !data["Top Crops"]) {
           return;
@@ -130,10 +158,7 @@ const HomeDashboard: React.FC = () => {
             district: data.district
               ? `${prettyName(data.district)}${data.state ? `, ${prettyName(data.state)}` : ''}`
               : (locSource === 'gps' ? 'your location' : prettyName(locDistrict)),
-            period:
-              i === 0 ? '4 Months • High Water' :
-              i === 1 ? '10-18 Months • High Water' :
-              '6 Months • Medium Water',
+            period: null, // filled from real /crop/info below
             score: `+${score}%`,
             img:
               name === "rice" ? cropRice :
@@ -143,6 +168,11 @@ const HomeDashboard: React.FC = () => {
         });
 
         setRecommendations(mapped);
+
+        // Real agronomy for the recommended crops (duration + water needs).
+        getCropInfo(mapped.map((m) => m.name.toLowerCase()))
+          .then((res) => setRecsInfo(res?.crops || {}))
+          .catch(() => setRecsInfo({}));
 
       } catch (err) {
         console.error("API ERROR:", err);
@@ -191,26 +221,34 @@ const HomeDashboard: React.FC = () => {
             👤
           </button>
         </div>
-      </div>
-
-      {/* Weather */}
+      </div>        {/* Weather: live Open-Meteo via the backend (district or GPS coords) */}
       <div className="px-5 mb-4">
         <div className="glass-card p-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <Cloud className="w-8 h-8 text-primary" />
             <div>
-              <p className="text-2xl font-extrabold text-foreground">28°C</p>
-              <p className="text-xs text-muted-foreground">{t('partlyCloudy')}</p>
+              <p className="text-2xl font-extrabold text-foreground">
+                {weather ? `${Math.round(weather.temperature)}°C` : '—'}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {weather
+                  ? `Live · ${weather.source === 'open_meteo' ? 'Open-Meteo' : 'national fallback'}`
+                  : 'Weather unavailable'}
+              </p>
             </div>
           </div>
           <div className="flex gap-4">
             <div className="flex items-center gap-1">
               <Droplets className="w-3.5 h-3.5 text-primary" />
-              <span className="text-xs text-muted-foreground">65%</span>
+              <span className="text-xs text-muted-foreground">
+                {weather ? `${Math.round(weather.humidity)}%` : '—'}
+              </span>
             </div>
             <div className="flex items-center gap-1">
               <Wind className="w-3.5 h-3.5 text-primary" />
-              <span className="text-xs text-muted-foreground">12 km/h</span>
+              <span className="text-xs text-muted-foreground">
+                {weather ? `${weather.rainfall.toFixed(1)} mm rain` : '—'}
+              </span>
             </div>
           </div>
         </div>
@@ -366,7 +404,7 @@ const HomeDashboard: React.FC = () => {
                   {rec.name}
                 </p>
                 <p className="text-[10px] text-muted-foreground">
-                  {rec.period}
+                  {periodFromInfo(recsInfo[rec.name.toLowerCase()]) || 'Duration data unavailable'}
                 </p>
               </div>
               <span className="text-xs font-bold text-primary">
