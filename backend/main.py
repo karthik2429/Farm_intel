@@ -9,7 +9,7 @@ and the page components (CropRotationPage, FertilizerRecommendationPage,
 PricePredictionPage, HomeDashboard).
 """
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
@@ -40,6 +40,7 @@ import mandi_prices  # noqa: E402
 import price_forecast  # noqa: E402
 import crop_info  # noqa: E402
 import price_store  # noqa: E402
+import chat as chat_service  # noqa: E402
 
 app = FastAPI(title="FarmIntel API", version="3.0.0")
 
@@ -571,7 +572,72 @@ async def default_npk(request: Dict[str, Any]):
     }
 
 
-# ─────────────────────────── Mandi prices ────────────────────────────────
+# ─────────────────────────── Mandi prices ──────────────────────────────────
+
+# ─────────────────────────── AI assistant ────────────────────────
+
+class ChatMessage(BaseModel):
+    role: str
+    content: str
+
+
+class ChatRequest(BaseModel):
+    messages: List[ChatMessage]
+    district: Optional[str] = None
+    state: Optional[str] = None
+    lat: Optional[float] = None
+    lon: Optional[float] = None
+
+
+@app.post("/chat")
+async def ai_chat(request: ChatRequest, http: Request):
+    """
+    Real AI assistant replies (OpenAI-compatible endpoint called server-side;
+    the browser never sees the key). Grounded with the farmer's location and
+    live weather, and capped per client per day. When OPENAI_API_KEY is not
+    configured it answers 503 with the exact setup step instead of a canned
+    response.
+    """
+    if not chat_service.configured():
+        raise HTTPException(
+            status_code=503,
+            detail=("AI assistant not configured: set OPENAI_API_KEY in the "
+                    "backend environment (Freebuff Desktop: Account > Developer "
+                    "API can write it into the project .env)."))
+
+    turns = [
+        {"role": (m.role if m.role in ("user", "assistant") else "user"),
+         "content": str(m.content)[:4000]}
+        for m in request.messages if m.content and m.content.strip()
+    ]
+    if not turns:
+        raise HTTPException(status_code=422, detail="Empty conversation")
+
+    client_ip = (http.client.host if http.client else "unknown")
+    err = chat_service.check_rate(client_ip)
+    if err:
+        raise HTTPException(status_code=429, detail=err)
+
+    rlat, rlon = _resolve_coords(request.district, request.lat, request.lon,
+                                 "auto", state=request.state)
+    temp, hum, rain = _weather_or_default(rlat, rlon)
+    known = district_data.resolve_district(request.district, request.state,
+                                           rlat, rlon) or {}
+    label = ", ".join(x for x in (known.get("district"), known.get("state")) if x)
+    system = chat_service.build_system_prompt(
+        label.title(),
+        {"temperature": round(temp, 1), "humidity": round(hum, 1),
+         "rainfall": round(rain, 1)},
+    )
+    try:
+        reply = chat_service.chat(turns, system)
+    except RuntimeError as exc:  # noqa: BLE001 - surface the provider error honestly
+        raise HTTPException(status_code=502, detail=str(exc))
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502,
+                            detail=f"Assistant request failed: {exc}")
+    return {"reply": reply}
+
 
 @app.get("/market/price")
 async def market_price(commodity: str, district: Optional[str] = None,

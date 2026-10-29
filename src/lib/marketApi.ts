@@ -213,3 +213,37 @@ export const getWeather = (loc: {
   if (loc.state) params.set("state", loc.state);
   return fetchJson(`${API_BASE}/weather?${params}`, 10000);
 };
+
+/** AI assistant: real replies from the backend (server-side key).
+ *  Throws an Error with the backend's detail so the UI can show it honestly. */
+export const getAiReply = async (
+  messages: Array<{ role: 'user' | 'assistant'; content: string }>,
+  district?: string,
+  state?: string,
+): Promise<{ reply: string }> => {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 60000);
+
+  const res = await fetch(`${API_BASE}/chat`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      messages,
+      district: district || null,
+      state: state || null,
+    }),
+    signal: ctrl.signal,
+  }).finally(() => clearTimeout(timer));
+
+  if (!res.ok) {
+    let detail = `AI request failed (${res.status})`;
+    try {
+      const body = await res.json();
+      if (body?.detail) detail = body.detail;
+    } catch {
+      /* non-JSON body */
+    }
+    throw new Error(detail);
+  }
+  return (await res.json()) as { reply: string };
+};

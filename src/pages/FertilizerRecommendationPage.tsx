@@ -19,9 +19,20 @@ const FertilizerRecommendationPage: React.FC = () => {
   const [potassium, setPotassium] = useState('');
   const [ph, setPh] = useState('');
 
-  const [locationMode, setLocationMode] = useState<'current' | 'custom'>('current');
-  const [selectedState, setSelectedState] = useState('Karnataka');
-  const [selectedDistrict, setSelectedDistrict] = useState('Belagavi');
+  // Profile district saved? Start there instead of forcing GPS detection.
+  const [locationMode, setLocationMode] = useState<'current' | 'custom'>(
+    () => (localStorage.getItem('profile_district') ? 'custom' : 'current'));
+  // Saved profile location first (falls back only during validation) —
+  // the same source the other pages default from.
+  const [selectedState, setSelectedState] = useState(() => {
+    const s = localStorage.getItem('profile_state');
+    return s && getDistricts(s as string).length ? (s as string) : 'Karnataka';
+  });
+  const [selectedDistrict, setSelectedDistrict] = useState(() => {
+    const st = localStorage.getItem('profile_state');
+    const d = localStorage.getItem('profile_district');
+    return st && d && getDistricts(st).includes(d) ? d : '';
+  });
   const [autoNPK, setAutoNPK] = useState<{N: number, P: number, K: number, ph: number, rainfall: number, temperature: number} | null>(null);
   const [fetchingNPK, setFetchingNPK] = useState(false);
   const [detectingLocation, setDetectingLocation] = useState(false);

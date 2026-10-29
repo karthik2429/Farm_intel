@@ -23,10 +23,20 @@ const CropRecommendationsPage: React.FC = () => {
   const [ph, setPh] = useState('');
   const [rainfall, setRainfall] = useState('');
 
-  const [locationMode, setLocationMode] = useState<'current' | 'custom'>('current');
+  // Profile district saved? Start there instead of forcing GPS detection.
+  const [locationMode, setLocationMode] = useState<'current' | 'custom'>(
+    () => (localStorage.getItem('profile_district') ? 'custom' : 'current'));
 
-  const [selectedState, setSelectedState] = useState('Karnataka');
-  const [selectedDistrict, setSelectedDistrict] = useState('Belagavi');
+  // Saved profile location first, mirroring the other pages.
+  const [selectedState, setSelectedState] = useState(() => {
+    const s = localStorage.getItem('profile_state');
+    return s && getDistricts(s as string).length ? (s as string) : 'Karnataka';
+  });
+  const [selectedDistrict, setSelectedDistrict] = useState(() => {
+    const st = localStorage.getItem('profile_state');
+    const d = localStorage.getItem('profile_district');
+    return st && d && getDistricts(st).includes(d) ? d : '';
+  });
 
   const [detectingLocation, setDetectingLocation] = useState(false);
   const [coords, setCoords] = useState<{ lat: number; lon: number } | null>(null);
