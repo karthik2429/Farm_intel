@@ -340,10 +340,12 @@ const CropDetailPage: React.FC = () => {
                   </div>
 
                   <button
-                    onClick={() => navigate('/price-prediction')}
+                    onClick={() => navigate('/price-prediction', {
+                      state: { commodity: crop.id, district },
+                    })}
                     className="w-full gradient-primary py-2 rounded-lg font-bold"
                   >
-                    Select This Crop →
+                    See 14-Day Forecast →
                   </button>
 
                 </div>

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { ArrowLeft, TrendingUp, Bell, AlertTriangle, Truck, CloudRain, ChevronDown, RefreshCw } from 'lucide-react';
 import BottomNav from '@/components/BottomNav';
@@ -38,7 +38,10 @@ const PricePredictionPage: React.FC = () => {
   const navigate = useNavigate();
   
   const [predictions, setPredictions] = useState<Prediction[]>([]);
-  const [trajectories, setTrajectories] = useState<Trajectory[]>([]);  const [selectedCommodity, setSelectedCommodity] = useState<string>('');
+  const [trajectories, setTrajectories] = useState<Trajectory[]>([]);
+  // Pre-filled when the farmer arrives here from a crop detail card.
+  const incoming = (useLocation().state || {}) as { commodity?: string; district?: string };
+  const [selectedCommodity, setSelectedCommodity] = useState<string>(incoming.commodity || '');
   const [selectedMarket, setSelectedMarket] = useState<string>('');
   // Default district comes from the farmer's saved profile when it has
   // real mandi data; the real district list is loaded from the backend.
@@ -60,6 +63,13 @@ const PricePredictionPage: React.FC = () => {
       try {
         const [comms, marketRows] = await Promise.all([getCommodities(), getMarkets()]);
         if (comms.length) setCommodities(comms);
+        // from the crop-detail handoff: match the crop against the real
+        // commodity list when possible, else pass it straight
+        if (incoming.commodity) {
+          const matched = comms.find(
+            (c) => c.toLowerCase() === incoming.commodity!.toLowerCase());
+          setSelectedCommodity(matched || incoming.commodity);
+        }
         const ds: string[] = [];
         for (const { district } of marketRows) {
           if (district && !ds.includes(district)) ds.push(district);
@@ -72,8 +82,9 @@ const PricePredictionPage: React.FC = () => {
         if (ds.length) {
           setDistricts(ds);
           setMarketsByDistrict(byDistrict);
-          // keep the profile default only if real data covers it
-          const want = localStorage.getItem('profile_district');
+          // the handed-over district wins over the profile default when it
+          // has real mandi coverage
+          const want = incoming.district || localStorage.getItem('profile_district');
           setSelectedDistrict(prev =>
             want && ds.includes(want) ? want : (prev && ds.includes(prev) ? prev : ds[0]));
         }
