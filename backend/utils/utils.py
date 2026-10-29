@@ -118,7 +118,7 @@ DISTRICT_COORDS = {
 def get_district(lat, lon):
     if geolocator is not None:
         try:
-            location = geolocator.reverse((lat, lon), language='en')
+            location = geolocator.reverse((lat, lon), language='en', timeout=5)
             if location is None:
                 return None
             address = location.raw.get('address', {})
@@ -153,7 +153,7 @@ def get_lat_lon_from_district(district):
 
     if geolocator is not None:
         try:
-            location = geolocator.geocode(f"{district}, India")
+            location = geolocator.geocode(f"{district}, India", timeout=5)
             if location:
                 return location.latitude, location.longitude
         except Exception:
@@ -233,7 +233,7 @@ def get_weather(lat, lon):
 
     url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current_weather=true&hourly=relativehumidity_2m,precipitation"
 
-    data = requests.get(url).json()
+    data = requests.get(url, timeout=6).json()
 
     temp = data['current_weather']['temperature']
     current_time = data['current_weather']['time']

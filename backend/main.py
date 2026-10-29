@@ -1,96 +1,118 @@
 """
 FarmIntel Backend API Server
-Serves ML models for crop recommendation, fertilizer recommendation, and price prediction
+
+Serves ML models for crop recommendation, fertilizer recommendation,
+crop rotation planning, and price prediction (Goa XGBoost + real weather).
+
+Response shapes match the frontend contracts in src/lib/api.ts, priceApi.ts
+and the page components (CropRotationPage, FertilizerRecommendationPage,
+PricePredictionPage, HomeDashboard).
 """
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
+import sys
+import json
+from datetime import datetime
+from pathlib import Path
+
 import joblib
 import numpy as np
 import pandas as pd
-import json
-import os
-from pathlib import Path
 
-app = FastAPI(title="FarmIntel API", version="1.0.0")
+BASE_DIR = Path(__file__).parent
+sys.path.insert(0, str(BASE_DIR))
+sys.path.insert(0, str(BASE_DIR / "price_predictor" / "goa_model"))
 
-# CORS middleware
+from utils.utils import (  # noqa: E402
+    get_rotation_suggestions,
+    plan_two_season_rotation,
+    recommend_fertilizer as dataset_recommend_fertilizer,
+    get_default_npk_from_location,
+    get_lat_lon_from_district,
+    get_weather,
+)
+import price_engine  # noqa: E402
+import district_data  # noqa: E402
+import mandi_prices  # noqa: E402
+import price_forecast  # noqa: E402
+
+app = FastAPI(title="FarmIntel API", version="3.0.0")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configure appropriately for production
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # Global model storage
-models = {}
-encoders = {}
-lookups = {}
+models: Dict[str, Any] = {}
+encoders: Dict[str, Any] = {}
+lookups: Dict[str, Any] = {}
 
-# Paths
-BASE_DIR = Path(__file__).parent
 MODELS_DIR = BASE_DIR / "models"
-HYBRID_DIR = BASE_DIR / "hybrid_crop_model" / "models"
-PRICE_DIR = BASE_DIR / "price_predictor" / "goa_model"
 
-# Load models on startup
+
 @app.on_event("startup")
 async def load_models():
     global models, encoders, lookups
-    
     try:
-        # Load final_model (crop recommendation)
-        models['rf_crop'] = joblib.load(MODELS_DIR / "rf_model.pkl")
-        encoders['crop_label'] = joblib.load(MODELS_DIR / "label_encoder.pkl")
-        
+        models["rf_crop"] = joblib.load(MODELS_DIR / "rf_model.pkl")
+        encoders["crop_label"] = joblib.load(MODELS_DIR / "label_encoder.pkl")
         with open(MODELS_DIR / "config.json") as f:
-            lookups['config'] = json.load(f)
-            
+            lookups["config"] = json.load(f)
         with open(MODELS_DIR / "district_crop_map.json") as f:
-            lookups['district_crop_map'] = json.load(f)
-            
+            lookups["district_crop_map"] = json.load(f)
         with open(MODELS_DIR / "historical_lookup.json") as f:
-            lookups['historical'] = json.load(f)
-            
-        print("✅ Loaded final_model (crop recommendation)")
-    except Exception as e:
-        print(f"⚠️ Failed to load final_model: {e}")
-    
-    try:
-        # Load hybrid_crop_model
-        models['rf_hybrid'] = joblib.load(HYBRID_DIR / "rf_model.pkl")
-        models['xgb_hybrid'] = joblib.load(HYBRID_DIR / "xgb_model.pkl")
-        encoders['hybrid_label'] = joblib.load(HYBRID_DIR / "label_encoder.pkl")
-        print("✅ Loaded hybrid_crop_model")
-    except Exception as e:
-        print(f"⚠️ Failed to load hybrid_crop_model: {e}")
-    
-    try:
-        # Load price prediction model
-        models['xgb_price'] = joblib.load(PRICE_DIR / "goa_xgb_model.pkl")
-        with open(PRICE_DIR / "goa_model_metadata.json") as f:
-            lookups['price_metadata'] = json.load(f)
-        print("✅ Loaded price prediction model")
-    except Exception as e:
-        print(f"⚠️ Failed to load price model: {e}")
+            lookups["historical"] = json.load(f)
+        print(f"✅ crop model loaded ({len(encoders['crop_label'].classes_)} crops)")
+    except Exception as e:  # noqa: BLE001
+        print(f"⚠️ Failed to load crop model: {e}")
 
-# Request/Response Models
+
+# ─────────────────────── Request / Response models ───────────────────────
+
 class CropRecommendRequest(BaseModel):
+    N: Optional[float] = None
+    P: Optional[float] = None
+    K: Optional[float] = None
+    temperature: Optional[float] = None
+    humidity: Optional[float] = None
+    ph: Optional[float] = 6.5
+    rainfall: Optional[float] = None
+    district: Optional[str] = None
+    state: Optional[str] = None
+    season: Optional[str] = "kharif"
+    lat: Optional[float] = None
+    lon: Optional[float] = None
+    mode: Optional[str] = "auto"
+
+
+class RotationRequest(BaseModel):
+    prev_crop: str
     N: float
     P: float
     K: float
-    temperature: float
-    humidity: float
-    ph: float
-    rainfall: float
+    top_n: int = 5
 
-class CropRecommendResponse(BaseModel):
-    crop: str
-    confidence: float
-    alternatives: List[Dict[str, Any]]
+
+class RotationPlanRequest(BaseModel):
+    season1_crop: str
+    N: Optional[float] = None
+    P: Optional[float] = None
+    K: Optional[float] = None
+    ph: Optional[float] = None
+    lat: Optional[float] = None
+    lon: Optional[float] = None
+    district: Optional[str] = None
+    state: Optional[str] = None
+    mode: Optional[str] = "auto"
+    top_n: int = 3
+
 
 class FertilizerRequest(BaseModel):
     crop: str
@@ -102,237 +124,603 @@ class FertilizerRequest(BaseModel):
     lat: Optional[float] = None
     lon: Optional[float] = None
     district: Optional[str] = None
+    state: Optional[str] = None
     mode: Optional[str] = "auto"
     top_k: int = 5
 
-class FertilizerResponse(BaseModel):
-    recommended_fertilizers: List[str]
-    top_matches: List[Dict[str, Any]]
-    soil_nutrients: Dict[str, float]
-    crop: str
-    soil: str
-
-class RotationRequest(BaseModel):
-    prev_crop: str
-    N: float
-    P: float
-    K: float
-    top_n: int = 5
-
-class RotationResponse(BaseModel):
-    suggestions: List[Dict[str, Any]]
-
-class RotationPlanRequest(BaseModel):
-    season1_crop: str
-    N: Optional[float] = None
-    P: Optional[float] = None
-    K: Optional[float] = None
-    ph: Optional[float] = None
-    lat: Optional[float] = None
-    lon: Optional[float] = None
-    district: Optional[str] = None
-    mode: Optional[str] = "auto"
-    top_n: int = 5
 
 class PricePredictionRequest(BaseModel):
-    district: str
-    commodity: str
-    market: str = "All"
+    district: str = "North Goa"
+    commodity: Optional[str] = None
+    market: Optional[str] = "All"
     days: int = 14
 
-class PricePredictionResponse(BaseModel):
-    district: str
-    commodity: str
-    market: str
-    current_price: float
-    predicted_price_14d: float
-    predicted_change_pct: float
-    prediction_date: str
-    model: str
 
-# Health check
+# ─────────────────────── Helpers ─────────────────────────────────────────
+
+_DISTRICT_COORDS = {
+    "belagavi": (15.85, 74.5), "bengaluru urban": (12.97, 77.59),
+    "bengaluru rural": (13.2, 77.6), "mysuru": (12.3, 76.6),
+    "koppal": (15.35, 76.15), "tumakuru": (13.34, 77.1),
+    "nashik": (20.0, 73.8), "pune": (18.52, 73.86),
+    "ludhiana": (30.9, 75.85), "bhopal": (23.26, 77.4),
+    "north goa": (15.5, 73.83), "south goa": (15.2, 74.0),
+}
+
+
+def _resolve_coords(district: Optional[str], lat: Optional[float],
+                    lon: Optional[float], mode: str = "auto",
+                    state: Optional[str] = None):
+    """Resolve (lat, lon) from coords, known districts, or geocoding."""
+    if mode == "coords" and lat is not None and lon is not None:
+        return lat, lon
+    if lat is not None and lon is not None:
+        return lat, lon
+    if district:
+        key = district.strip().lower()
+        if key in _DISTRICT_COORDS:
+            return _DISTRICT_COORDS[key]
+        geo = district_data.geocode_district(district, state)
+        if geo:
+            return geo
+        la, lo = get_lat_lon_from_district(district)
+        if la is not None and lo is not None:
+            return la, lo
+    return lat, lon
+
+
+def _weather_or_default(lat: Optional[float], lon: Optional[float]):
+    """Live Open-Meteo weather with a monsoon-aware India fallback."""
+    try:
+        if lat is not None and lon is not None:
+            temp, humidity, rainfall = get_weather(lat, lon)
+            return float(temp), float(humidity), float(rainfall)
+    except Exception:  # noqa: BLE001
+        pass
+    m = pd.Timestamp.now().month
+    if m in (6, 7, 8, 9):
+        return 27.0, 85.0, 12.0
+    if m in (10, 11):
+        return 28.0, 75.0, 3.0
+    if m in (12, 1, 2):
+        return 24.0, 60.0, 0.5
+    return 31.0, 55.0, 1.0
+
+
+def _fill_npk_from_location(payload: FertilizerRequest):
+    """Resolve missing N/P/K/PH from the district's real soil survey."""
+    if None not in (payload.N, payload.P, payload.K, payload.PH):
+        return payload.N, payload.P, payload.K, payload.PH
+    defaults = district_data.default_soil_for(
+        payload.district, getattr(payload, "state", None),
+        payload.lat, payload.lon)
+    if not defaults:
+        lat, lon = _resolve_coords(payload.district, payload.lat,
+                                   payload.lon, payload.mode or "auto",
+                                   state=getattr(payload, "state", None))
+        defaults = get_default_npk_from_location(
+            lat=lat, lon=lon,
+            district=(payload.district or "").lower() or None,
+            mode="coords" if (lat is not None and lon is not None) else "auto")
+    n = payload.N if payload.N is not None else defaults.get("N", 90)
+    p = payload.P if payload.P is not None else defaults.get("P", 40)
+    k = payload.K if payload.K is not None else defaults.get("K", 40)
+    ph = payload.PH if payload.PH is not None else defaults.get("ph", 6.5)
+    return n, p, k, ph
+
+
+# ─────────────────────── Health ──────────────────────────────────────────
+
 @app.get("/health")
 async def health_check():
     return {
         "status": "healthy",
         "models_loaded": list(models.keys()),
-        "version": "1.0.0"
+        "price_model": price_engine.model_loaded(),
+        "price_error": price_engine.load_error(),
+        "version": "3.0.0",
     }
 
-# Crop Recommendation
-@app.post("/predict", response_model=CropRecommendResponse)
+
+# ─────────────────────── Crop recommendation ─────────────────────────────
+
+@app.post("/predict")
 async def predict_crop(request: CropRecommendRequest):
-    if 'rf_crop' not in models:
-        raise HTTPException(status_code=503, detail="Crop model not loaded")
-    
+    """
+    District-aware crop recommendation.
+
+    Blends the RandomForest ML model with the district's real soil survey
+    (DES 2024-25), its historical cropping pattern and season. Falls back to
+    pure ML when the district is unknown.
+
+    Returns {crop, confidence, alternatives, Top Crops, district, season,
+    soil_used} for CropRecommendationsPage and HomeDashboard.
+    """
     try:
-        features = np.array([[
-            request.N, request.P, request.K,
-            request.temperature, request.humidity,
-            request.ph, request.rainfall
-        ]])
-        
-        # Get prediction probabilities
-        probas = models['rf_crop'].predict_proba(features)[0]
-        classes = encoders['crop_label'].classes_
-        
-        # Top prediction
-        top_idx = np.argmax(probas)
-        top_crop = classes[top_idx]
-        confidence = float(probas[top_idx])
-        
-        # Top 3 alternatives
-        top3_idx = np.argsort(probas)[-3:][::-1]
-        alternatives = [
-            {"crop": classes[i], "confidence": float(probas[i])}
-            for i in top3_idx
-        ]
-        
-        return CropRecommendResponse(
-            crop=top_crop,
-            confidence=confidence,
-            alternatives=alternatives
+        # ---- resolve location (name or coordinates) ----
+        lat, lon = _resolve_coords(request.district, request.lat, request.lon,
+                                   request.mode or "auto",
+                                   state=request.state)
+
+        # ---- fill missing soil/weather values from district + live data ----
+        prof = district_data.resolve_district(
+            request.district, request.state,
+            lat if request.mode == "coords" else None,
+            lon if request.mode == "coords" else None)
+        soil = (prof or {}).get("soil") if prof else None
+        soil_valid = bool(soil) and any(
+            (soil.get(k) or 0) > 0 for k in ("N", "P", "K"))
+
+        N = request.N if request.N is not None else (
+            soil.get("N") if soil_valid else 90)
+        P = request.P if request.P is not None else (
+            soil.get("P") if soil_valid else 40)
+        K = request.K if request.K is not None else (
+            soil.get("K") if soil_valid else 40)
+        ph = request.ph if request.ph is not None else (
+            soil.get("ph") if soil_valid else 6.5)
+
+        temp = request.temperature
+        hum = request.humidity
+        rain = request.rainfall
+        if (temp is None or hum is None or rain is None) and lat and lon:
+            try:
+                wt, wh, wr = get_weather(lat, lon)
+                temp = temp if temp is not None else wt
+                hum = hum if hum is not None else wh
+                rain = rain if rain is not None else wr
+            except Exception:  # noqa: BLE001
+                pass
+        temp = float(temp if temp is not None else 27.0)
+        hum = float(hum if hum is not None else 70.0)
+        rain = float(rain if rain is not None else 5.0)
+
+        result = district_data.recommend_for_district(
+            N=N, P=P, K=K, ph=float(ph),
+            temperature=temp, humidity=hum, rainfall=rain,
+            district=request.district, state=request.state,
+            lat=lat if request.mode == "coords" else None,
+            lon=lon if request.mode == "coords" else None,
+            season=request.season or "kharif",
+            top_n=5,
         )
-    except Exception as e:
+        result["soil_used"] = result.get("soil_used") or {
+            "N": round(float(N), 1), "P": round(float(P), 1),
+            "K": round(float(K), 1), "ph": round(float(ph), 1)}
+        result["weather"] = {"temperature": round(temp, 1),
+                             "humidity": round(hum, 1),
+                             "rainfall": round(rain, 1)}
+    except HTTPException:
+        raise
+    except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=str(e))
 
-# Fertilizer Recommendation
-@app.post("/fertilizer/recommend", response_model=FertilizerResponse)
-async def recommend_fertilizer(request: FertilizerRequest):
-    # This would use the fertilizer dataset logic
-    # For now, return mock data structure
-    return FertilizerResponse(
-        recommended_fertilizers=["Urea", "DAP", "MOP"],
-        top_matches=[
-            {"Fertilizer": "Urea", "Similarity": 0.95, "Remark": "High nitrogen"},
-            {"Fertilizer": "DAP", "Similarity": 0.87, "Remark": "Balanced NPK"},
-            {"Fertilizer": "MOP", "Similarity": 0.82, "Remark": "Potassium source"}
-        ],
-        soil_nutrients={"N": request.N or 0, "P": request.P or 0, "K": request.K or 0, "PH": request.PH or 7},
-        crop=request.crop,
-        soil=request.soil
-    )
+    results = result.get("results") or []
+    if not results:
+        raise HTTPException(status_code=503, detail="No recommendation available")
 
-# Crop Rotation Suggestions
-@app.post("/rotation/suggestions", response_model=RotationResponse)
+    ranked = [(r["crop"], float(r["display_score"])) for r in results]
+    alternatives = [{"crop": c, "confidence": round(s, 4)}
+                    for c, s in ranked[:4]]
+    return {
+        "crop": ranked[0][0],
+        "confidence": round(ranked[0][1], 4),
+        "alternatives": alternatives,
+        "Top Crops": [[c, round(s, 4)] for c, s in ranked[:3]],
+        "district": result.get("resolved_district"),
+        "state": result.get("resolved_state"),
+        "season": result.get("season"),
+        "soil_used": result.get("soil_used"),
+        "weather": result.get("weather"),
+        "note": result.get("note"),
+    }
+
+
+# ─────────────────────── Crop rotation ───────────────────────────────────
+
+@app.post("/rotation/suggestions")
 async def rotation_suggestions(request: RotationRequest):
-    # Mock response - implement actual logic
-    return RotationResponse(
-        suggestions=[
-            {"crop": "Wheat", "score": 0.92},
-            {"crop": "Chickpea", "score": 0.88},
-            {"crop": "Mustard", "score": 0.85}
-        ]
-    )
+    """NPK-depletion based next-crop scoring (utils engine + master xlsx)."""
+    try:
+        result = get_rotation_suggestions(
+            request.prev_crop, request.N, request.P, request.K, request.top_n)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(e))
+    return result  # may contain "error" key; frontend toasts it
 
-# Crop Rotation Plan
-@app.post("/rotation/plan", response_model=RotationResponse)
+
+@app.post("/rotation/plan")
 async def rotation_plan(request: RotationPlanRequest):
-    # Mock response - implement actual logic
-    return RotationResponse(
-        suggestions=[
-            {"season": "Kharif", "crop": request.season1_crop, "score": 0.95},
-            {"season": "Rabi", "crop": "Wheat", "score": 0.90},
-            {"season": "Summer", "crop": "Moong", "score": 0.85}
-        ]
-    )
+    """
+    Full 2-season plan: {season1, season2_options, soil_after_s1,
+    season3_preview, warnings} — exactly what CropRotationPage renders.
+    """
+    lat, lon = _resolve_coords(request.district, request.lat, request.lon,
+                               request.mode or "auto", state=request.state)
+    try:
+        plan = plan_two_season_rotation(
+            season1_crop=request.season1_crop,
+            N=request.N, P=request.P, K=request.K, ph=request.ph,
+            lat=lat, lon=lon,
+            district=(request.district or "").strip().lower() or None,
+            mode="coords" if (lat is not None and lon is not None) else "auto",
+            top_n=request.top_n or 3,
+        )
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(e))
+    if "error" in plan:
+        return plan  # frontend checks data.error and toasts
+    return plan
 
-# Default NPK from location
+
+# ─────────────────────── Fertilizer ──────────────────────────────────────
+
+# Frontend crop names -> fertilizer dataset crop names
+_FERT_ALIAS = {
+    "rice": "rice", "wheat": "wheat", "maize": "maize", "cotton": "cotton",
+    "sugarcane": "sugarcane", "chickpea": "chickpea",
+    "pigeon pea": "pigeon peas", "green gram": "mung bean",
+    "black gram": "black gram", "lentil": "lentil",
+    "groundnut": "ground nut", "kidney bean": "kidney beans",
+    "moth bean": "moth beans", "coconut": "coconut", "banana": "banana",
+    "mango": "mango", "grapes": "grapes", "orange": "orange",
+    "papaya": "papaya", "pomegranate": "pomegranate",
+    "muskmelon": "muskmelon", "watermelon": "watermelon",
+    "millet": "millet", "jute": "jute", "tea": "tea", "coffee": "coffee",
+    "tobacco": "tobacco", "rubber": "rubber", "peas": "peas",
+    "apple": "apple", "adzuki beans": "adzuki beans",
+}
+
+
+def _normalize_soil(soil: str) -> str:
+    """Map UI soil names onto the 5 soils the dataset actually has
+    (acidic soil, alkaline soil, loamy soil, neutral soil, peaty soil) so
+    cosine matching runs instead of instantly falling back."""
+    s = (soil or "").strip().lower()
+    if not s:
+        return "loamy soil"
+    if "loam" in s:
+        return "loamy soil"
+    if "peat" in s:
+        return "peaty soil"
+    if "acid" in s:
+        return "acidic soil"
+    if "alkaline" in s:
+        return "alkaline soil"
+    # Black / Red / Clayey / Sandy -> classify by district soil pH profile
+    return ""  # caller resolves via district soil
+
+# Ideal NPK targets for crops not in the dataset (rule-based fallback)
+_FERT_TARGETS = {
+    "soybean": (30, 60, 40), "mustard": (80, 45, 40),
+    "sunflower": (60, 55, 45), "sesame": (50, 40, 40),
+    "potato": (110, 60, 70), "tomato": (90, 55, 55),
+    "onion": (90, 45, 50), "chilli": (100, 50, 50),
+    "turmeric": (60, 50, 50), "ginger": (75, 50, 50),
+    "jowar": (80, 40, 40), "bajra": (80, 40, 40), "ragi": (50, 40, 40),
+    "barley": (60, 30, 30), "castor": (50, 30, 30),
+    "linseed": (60, 30, 30), "safflower": (50, 25, 25),
+    "niger": (40, 30, 20), "horse gram": (20, 30, 20),
+    "cowpea": (20, 40, 25), "field pea": (25, 50, 30),
+    "lablab bean": (20, 40, 25), "okra": (90, 45, 50),
+    "brinjal": (90, 50, 50), "cabbage": (100, 55, 55),
+    "cauliflower": (100, 55, 55), "cucumber": (70, 40, 45),
+    "pumpkin": (60, 40, 45), "bottle gourd": (70, 40, 45),
+    "bitter gourd": (70, 40, 45), "watermelon": (60, 40, 45),
+    "muskmelon": (60, 40, 45), "guava": (70, 50, 50),
+    "garlic": (90, 45, 50), "coriander": (30, 25, 25),
+    "cumin": (30, 20, 20), "fennel": (40, 25, 25),
+    "fenugreek": (30, 30, 25), "foxtail millet": (50, 30, 30),
+    "kodo millet": (50, 30, 30), "little millet": (45, 30, 30),
+    "barnyard millet": (45, 30, 30), "proso millet": (50, 30, 30),
+    "green gram": (20, 40, 25), "black gram": (20, 40, 25),
+    "ground nut": (25, 40, 40), "pigeon peas": (25, 50, 30),
+    "kidney beans": (80, 45, 40), "moth beans": (20, 35, 25),
+    "adzuki beans": (30, 45, 35), "mung bean": (20, 40, 25),
+}
+
+
+def _rule_based_fertilizer(crop: str, n: float, p: float, k: float,
+                           ph: float) -> Dict[str, Any]:
+    """Transparent NPK-gap analysis for crops missing from the dataset."""
+    tgt = _FERT_TARGETS.get(crop.lower(), (90, 45, 45))
+    gaps = {"N": max(0.0, tgt[0] - n), "P": max(0.0, tgt[1] - p),
+            "K": max(0.0, tgt[2] - k)}
+    recs, matches = [], []
+    if gaps["N"] > 20:
+        recs.append("Urea")
+        matches.append({"Fertilizer": "Urea",
+                        "Similarity": round(min(1, gaps["N"] / 120), 2),
+                        "Remark": f"Apply ~{round(gaps['N'] * 2)} kg/ha to close N gap"})
+    if gaps["P"] > 15:
+        recs.append("DAP")
+        matches.append({"Fertilizer": "DAP",
+                        "Similarity": round(min(1, gaps["P"] / 60), 2),
+                        "Remark": f"Apply ~{round(gaps['P'] * 2.2)} kg/ha for phosphorus"})
+    if gaps["K"] > 15:
+        recs.append("Muriate of Potash (MOP)")
+        matches.append({"Fertilizer": "Muriate of Potash (MOP)",
+                        "Similarity": round(min(1, gaps["K"] / 70), 2),
+                        "Remark": f"Apply ~{round(gaps['K'] * 1.7)} kg/ha to close K gap"})
+    if not recs:
+        recs = ["Balanced NPK (19:19:19) foliar spray"]
+        matches.append({"Fertilizer": "NPK 19:19:19", "Similarity": 0.6,
+                        "Remark": "Soil nutrients already near crop targets"})
+    if ph < 5.5:
+        recs.append("Agricultural Lime")
+        matches.append({"Fertilizer": "Lime", "Similarity": 0.55,
+                        "Remark": f"Soil acidic (pH {ph}) - apply lime before sowing"})
+    elif ph > 8.5:
+        recs.append("Gypsum")
+        matches.append({"Fertilizer": "Gypsum", "Similarity": 0.55,
+                        "Remark": f"Soil alkaline (pH {ph}) - gypsum helps"})
+    return {
+        "recommended_fertilizers": recs,
+        "top_matches": matches,
+        "soil_nutrients": {"N": round(float(n), 1), "P": round(float(p), 1),
+                           "K": round(float(k), 1), "PH": round(float(ph), 1)},
+        "crop": crop,
+        "source": "rule_based",
+    }
+
+
+@app.post("/fertilizer/recommend")
+async def recommend_fertilizer(request: FertilizerRequest):
+    """
+    Dataset cosine-similarity matching (fertilizer.ipynb logic) with a
+    transparent rule-based fallback for crops not in the dataset.
+    Response shape matches FertilizerRecommendationPage.
+    """
+    try:
+        n, p, k, ph = _fill_npk_from_location(request)
+    except Exception:  # noqa: BLE001
+        n, p, k, ph = request.N or 90, request.P or 40, request.K or 40, request.PH or 6.5
+
+    key = request.crop.strip().lower()
+    dataset_crop = _FERT_ALIAS.get(key, key)
+    soil_key = _normalize_soil(request.soil)
+    if not soil_key:
+        # Black/Red/Clayey/Sandy: classify by the district's real pH profile
+        prof = district_data.default_soil_for(
+            request.district, getattr(request, "state", None),
+            request.lat, request.lon)
+        ph_hint = float((prof or {}).get("ph") or ph or 6.5)
+        if ph_hint < 6.0:
+            soil_key = "acidic soil"
+        elif ph_hint > 7.5:
+            soil_key = "alkaline soil"
+        else:
+            soil_key = "neutral soil"
+    try:
+        result = dataset_recommend_fertilizer(
+            dataset_crop, soil_key, n, p, k, ph, top_k=request.top_k)
+    except Exception as e:  # noqa: BLE001
+        print(f"[fertilizer] dataset engine failed: {e}")
+        result = None
+
+    if result is None or len(result) == 0:
+        return _rule_based_fertilizer(request.crop, n, p, k, ph)
+
+    fertilizers = result["Fertilizer"].value_counts().head(3).index.tolist()
+    top_matches = result[["Fertilizer", "Similarity", "Remark"]].head(5).to_dict("records")
+    return {
+        "recommended_fertilizers": fertilizers,
+        "top_matches": top_matches,
+        "soil_nutrients": {"N": round(float(n), 1), "P": round(float(p), 1),
+                           "K": round(float(k), 1), "PH": round(float(ph), 1)},
+        "crop": request.crop,
+        "soil": request.soil,
+        "source": "dataset",
+    }
+
+
+# ─────────────────────── Location defaults ───────────────────────────────
+
 @app.post("/location/default-npk")
 async def default_npk(request: Dict[str, Any]):
-    # Mock response - implement actual location-based logic
+    """
+    Real per-district soil defaults (DES district soil test survey) with
+    live weather; falls back to sensible India-wide values only when the
+    district is unknown.
+    """
+    lat = request.get("lat")
+    lon = request.get("lon")
+    district = request.get("district")
+    state = request.get("state")
+    mode = request.get("mode", "auto")
+
+    prof = district_data.resolve_district(district, state, lat, lon)
+    rlat, rlon = _resolve_coords(district, lat, lon, mode or "auto",
+                                 state=state)
+    if prof and not rlat:
+        rlat, rlon = prof.get("lat"), prof.get("lon")
+
+    try:
+        temp, humidity, rainfall = _weather_or_default(rlat, rlon)
+    except Exception:  # noqa: BLE001
+        temp, humidity, rainfall = 27.0, 80.0, 5.0
+
+    soil = (prof or {}).get("soil")
+    soil_valid = bool(soil) and any(
+        (soil.get(k) or 0) > 0 for k in ("N", "P", "K"))
+    if soil_valid:
+        return {
+            "N": round(float(soil["N"]), 1),
+            "P": round(float(soil["P"]), 1),
+            "K": round(float(soil["K"]), 1),
+            "ph": round(float(soil["ph"]), 1),
+            "rainfall": round(float(rainfall), 1),
+            "temperature": round(float(temp), 1),
+            "humidity": round(float(humidity), 1),
+            "district": prof.get("district"),
+            "state": prof.get("state"),
+            "source": "district_soil_survey",
+        }
+
+    # Fallbacks: geocoded weather + neutral NPK when district unknown
     return {
-        "N": 120.0,
-        "P": 60.0,
-        "K": 40.0,
-        "ph": 6.5,
-        "rainfall": 800,
-        "temperature": 28.0
+        "N": 90, "P": 40, "K": 40, "ph": 6.5,
+        "rainfall": round(float(rainfall), 1),
+        "temperature": round(float(temp), 1),
+        "humidity": round(float(humidity), 1),
+        "district": (prof or {}).get("district"),
+        "state": (prof or {}).get("state"),
+        "source": "fallback",
     }
 
-# Price Prediction (14-day)
-@app.post("/predict/14day", response_model=List[PricePredictionResponse])
-async def predict_14day(request: PricePredictionRequest):
-    if 'xgb_price' not in models:
-        raise HTTPException(status_code=503, detail="Price model not loaded")
-    
-    # Mock response - implement actual prediction logic
-    return [
-        PricePredictionResponse(
-            district=request.district,
-            commodity=request.commodity,
-            market=request.market,
-            current_price=2500.0,
-            predicted_price_14d=2650.0,
-            predicted_change_pct=6.0,
-            prediction_date=pd.Timestamp.now().strftime("%Y-%m-%d"),
-            model="XGBoost"
-        )
-    ]
 
-# Price Trajectory
+# ─────────────────────────── Mandi prices ────────────────────────────────
+
+@app.get("/market/price")
+async def market_price(commodity: str, district: Optional[str] = None,
+                       state: Optional[str] = None):
+    """
+    Best-effort mandi price: Goa local history, bundled district snapshot,
+    live AGMARKNET (self-healing probe), then MSP reference.
+
+    Always answers 200 - when nothing is available the body carries
+    `price: null` + `source: "unavailable"` so the frontend can render
+    "--" without console 404 noise.
+    """
+    result = mandi_prices.get_price(commodity, district, state)
+    if not result:
+        return {
+            "commodity": commodity,
+            "district": district,
+            "market": "",
+            "price": None,
+            "min_price": None,
+            "max_price": None,
+            "unit": "₹/quintal",
+            "source": "unavailable",
+            "detail": (f"No mandi price available for {commodity}"
+                       + (f" in {district}" if district else "") + " right now"),
+        }
+    return result
+
+
+@app.get("/market/status")
+async def market_status():
+    return mandi_prices.status()
+
+
+# ─────────────────────── Price prediction ────────────────────────────────
+
+REAL_MODEL_LABEL = "holtwinters-mandi-v1"
+
+
+def _forecast_entries(district: Optional[str], commodity: Optional[str],
+                      market: Optional[str], days: int = 14) -> List[dict]:
+    """Run the real Holt-Winters mandi forecast and shape it to the
+    frontend contracts in priceApi.ts. Adds change_from_prev_pct so the
+    daily table shows step-by-step movement."""
+    day = datetime.now().strftime("%Y-%m-%d")
+    entries = price_forecast.forecast(
+        district=district,
+        commodity=commodity,
+        market=market or "All",
+        days=days,
+    )
+    for e in entries:
+        e.setdefault("district", district or "")
+        e.setdefault("market", market or "All")
+        e["prediction_date"] = day
+        e["scope_level"] = e.get("scope_level", "district")
+        prev = e.get("current_price") or 0.0
+        for pt in e.get("trajectory", []):
+            if prev:
+                pt["change_from_prev_pct"] = round(
+                    (pt["predicted_price"] - prev) / prev * 100, 2)
+            prev = pt["predicted_price"]
+    return entries
+
+
+def _forecast_or_404(district: Optional[str], commodity: Optional[str],
+                     market: Optional[str], days: int = 14) -> List[dict]:
+    entries = _forecast_entries(district, commodity, market, days)
+    if not entries:
+        raise HTTPException(
+            status_code=404,
+            detail=(f"Not enough real mandi history yet to forecast "
+                    f"{commodity or 'this commodity'}"
+                    + (f" in {district}" if district else "") +
+                    ". Daily ingestion keeps accruing history — try again later."))
+    return entries
+
+
+def _price_guard():  # kept for /commodities + /markets backcompat
+    if not price_engine.model_loaded():
+        raise HTTPException(status_code=503,
+                            detail=f"Price model unavailable: {price_engine.load_error()}")
+
+
+@app.post("/predict/14day")
+async def predict_14day(request: PricePredictionRequest):
+    return _forecast_or_404(request.district, price_forecast.resolve_name(request.commodity),
+                            request.market)
+
+
 @app.post("/predict/trajectory")
 async def predict_trajectory(request: PricePredictionRequest):
-    # Mock response
-    trajectory = []
-    base_price = 2500.0
-    for day in range(request.days):
-        change = np.random.normal(0, 0.02)
-        base_price *= (1 + change)
-        trajectory.append({
-            "day": day + 1,
-            "date": (pd.Timestamp.now() + pd.Timedelta(days=day)).strftime("%Y-%m-%d"),
-            "predicted_price": round(base_price, 2),
-            "change_from_prev_pct": round(change * 100, 2)
-        })
-    
-    return [{
-        "district": request.district,
-        "commodity": request.commodity,
-        "market": request.market,
-        "current_price": 2500.0,
-        "trajectory": trajectory
-    }]
+    return _forecast_or_404(request.district, price_forecast.resolve_name(request.commodity),
+                            request.market, days=request.days)
 
-# Single Prediction with confidence
+
 @app.get("/predict/single")
-async def single_prediction(district: str, commodity: str, market: str):
+async def single_prediction(district: str, commodity: str,
+                            market: Optional[str] = "All"):
+    """Current market read derived from real data: latest observed price,
+    forecast band and an honest confidence from backtest MAPE."""
+    entry = _forecast_entries(district, price_forecast.resolve_name(commodity), market)
+    if not entry:
+        raise HTTPException(
+            status_code=404, detail=f"No mandi data for {commodity} in {district}")
+    e = entry[0]
+    mape = e.get("mape", 8.0)
+    confidence = round(max(50.0, min(95.0, 100.0 - mape * 2.0)), 1)
+    month = datetime.now().strftime("%B")
+    band_pct = (e["ci_high_14d"] - e["ci_low_14d"]) / max(e["predicted_price_14d"], 1) * 100
+    supply = ("stable" if band_pct < 12
+              else "watchful" if band_pct < 25 else "volatile")
     return {
-        "district": district,
-        "commodity": commodity,
-        "market": market,
-        "current_price": 2500.0,
-        "predicted_price_14d": 2650.0,
-        "predicted_change_pct": 6.0,
-        "prediction_date": pd.Timestamp.now().strftime("%Y-%m-%d"),
-        "model": "XGBoost",
-        "confidence": 0.85,
+        **{k: e.get(k) for k in ("district", "commodity", "market",
+                                  "current_price", "predicted_price_14d",
+                                  "predicted_change_pct")},
+        "prediction_date": datetime.now().strftime("%Y-%m-%d"),
+        "model": REAL_MODEL_LABEL,
+        "confidence": confidence,
+        "mape": mape,
+        "history_last": e.get("history_last"),
+        "stale_days": e.get("stale_days", 0),
+        "signal": e.get("signal"),
         "factors": {
-            "season": "Kharif",
-            "supply_pressure": "Moderate",
-            "weather_impact": "Favorable",
-            "festival_nearby": False
-        }
+            "season": month,
+            "supply_pressure": supply,
+            "weather_impact": "not modelled in this phase",
+            "festival_nearby": False,
+        },
     }
 
-# Commodities list
+
 @app.get("/commodities")
 async def get_commodities():
-    return {"commodities": ["Rice", "Wheat", "Maize", "Tomato", "Onion", "Potato", "Cotton", "Sugarcane"]}
+    comms = price_forecast.known_commodities()
+    fallback = price_engine.known_commodities() if price_engine.model_loaded() else []
+    merged = sorted(set([c for c in comms if c] + [c for c in fallback if c]))
+    return {"commodities": merged}
 
-# Markets list
+
 @app.get("/markets")
 async def get_markets(district: Optional[str] = None):
-    markets = [
-        {"district": "North Goa", "market": "Mapusa"},
-        {"district": "North Goa", "market": "Panaji"},
-        {"district": "South Goa", "market": "Margao"},
-        {"district": "Belagavi", "market": "Belagavi APMC"},
-        {"district": "Bengaluru", "market": "Yeshwanthpur"}
-    ]
-    if district:
-        markets = [m for m in markets if m["district"].lower() == district.lower()]
-    return {"markets": markets}
+    markets = price_forecast.known_markets()
+    out = []
+    for m in markets:
+        if district and (m.get("district") or "").lower() != district.lower():
+            continue
+        out.append({"district": m.get("district") or "",
+                    "market": m.get("market") or ""})
+    return {"markets": out}
+
 
 if __name__ == "__main__":
     import uvicorn

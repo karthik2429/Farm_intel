@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useLanguage } from '@/contexts/LanguageContext';
-import { ArrowLeft, Search, TrendingUp, TrendingDown } from 'lucide-react';
+import { ArrowLeft, Search, TrendingUp, TrendingDown, MapPin } from 'lucide-react';
 import BottomNav from '@/components/BottomNav';
 
 import { getMarketPrice } from '@/lib/marketApi';
@@ -16,11 +16,21 @@ const MarketPricesPage: React.FC = () => {
 
   const [searchQuery, setSearchQuery] = useState('');
   const [activeRegion, setActiveRegion] = useState('all');
-  const [marketData, setMarketData] = useState<any[]>([]);
+  interface MarketRow {
+    name: string; display: string; district: string;
+    price: number | null; min: number | null; max: number | null;
+    market: string; date: string; source: string; trend: string;
+    badge: string; isReal: boolean;
+  }
+  const [marketData, setMarketData] = useState<MarketRow[]>([]);
 
-  // 🔥 NEW STATE + DISTRICT
-  const [selectedState, setSelectedState] = useState("Karnataka");
-  const [selectedDistrict, setSelectedDistrict] = useState("");
+  // 🔥 NEW STATE + DISTRICT — default to the farmer's saved profile
+  const [selectedState, setSelectedState] = useState(
+    () => localStorage.getItem('profile_state') || "Karnataka"
+  );
+  const [selectedDistrict, setSelectedDistrict] = useState(
+    () => localStorage.getItem('profile_district') || ""
+  );
 
   const districts = useMemo(() => getDistricts(selectedState), [selectedState]);
 
@@ -31,64 +41,77 @@ const MarketPricesPage: React.FC = () => {
     { id: 'maharashtra', label: 'Maharashtra' },
   ];
 
-  // 🔥 REGION DISTRICTS
-  const regionDistrictMap: Record<string, string[]> = {
-    all: ["Bhopal", "Nashik", "Lasalgaon", "Rajkot", "Karnal"],
-
-    karnataka: ["Koppal", "Belagavi", "Mysuru", "Tumakuru"],
-    maharashtra: ["Nashik", "Lasalgaon", "Pune", "Nagpur"],
-    punjab: ["Ludhiana", "Amritsar", "Patiala"],
+  const regionStateMap: Record<string, string> = {
+    all: '',
+    karnataka: 'Karnataka',
+    punjab: 'Punjab',
+    maharashtra: 'Maharashtra',
   };
 
   const cropsList = [
-    { name: 'Wheat', display: 'Wheat (Banna)', district: 'Bhopal, Madhya Pradesh' },
-    { name: 'Tomato', display: 'Tomato (Tamatar)', district: 'Nashik, Maharashtra' },
-    { name: 'Onion', display: 'Onion (Pyaz)', district: 'Lasalgaon, Maharashtra' },
-    { name: 'Cotton', display: 'Cotton (Kapas)', district: 'Rajkot, Gujarat' },
-    { name: 'Rice', display: 'Rice (Basmati)', district: 'Karnal, Haryana' },
+    { name: 'Wheat', display: 'Wheat (Banna)', district: 'Bhopal' },
+    { name: 'Tomato', display: 'Tomato (Tamatar)', district: 'Nashik' },
+    { name: 'Onion', display: 'Onion (Pyaz)', district: 'Lasalgaon' },
+    { name: 'Cotton', display: 'Cotton (Kapas)', district: 'Rajkot' },
+    { name: 'Rice', display: 'Rice (Basmati)', district: 'Karnal' },
   ];
 
   // 🔥 FINAL DATA FETCH
   useEffect(() => {
     const loadMarket = async () => {
 
-      const regionDistricts = regionDistrictMap[activeRegion] || [];
+      const stateDistricts = getDistricts(selectedState);
 
       const results = await Promise.all(
         cropsList.map(async (item, i) => {
 
           let district = "";
+          let state = regionStateMap[activeRegion] || undefined;
 
           // ✅ PRIORITY SYSTEM
           if (selectedDistrict) {
-            district = selectedDistrict; // user choice
-          } else if (activeRegion !== "all") {
-            district = regionDistricts[i % regionDistricts.length];
+            district = selectedDistrict;          // user choice
+            state = selectedState;                // disambiguate same-name districts
+          } else if (activeRegion !== 'all') {
+            // real districts of the region's state, cycled per crop
+            const ds = getDistricts(regionStateMap[activeRegion]);
+            district = ds.length ? ds[i % ds.length] : item.district;
+          } else if (stateDistricts.length) {
+            // All India: cycle through the selected state's own districts so
+            // prices actually differ per crop row
+            district = stateDistricts[i % stateDistricts.length];
+            state = selectedState;
           } else {
-            district = item.district.split(",")[0];
+            district = item.district;
           }
 
           const mapped = mapCropName(item.name);
 
-          const data = await getMarketPrice(mapped, district);
+          const data = await getMarketPrice(mapped, district, state);
 
           return {
             ...item,
-            district,
+            district: state ? `${district}, ${state}` : district,
             price: data?.modal ?? null,
             min: data?.min ?? null,
             max: data?.max ?? null,
-            trend: Math.random() > 0.5 ? 'up' : 'down',
+            market: data?.market ?? '',
+            date: data?.date ?? '',
+            source: data?.source ?? '',
+            badge: data?.badge ?? '',
+            isReal: data?.is_real !== false,
+            trend: data?.max && data?.min && data?.modal != null
+              ? (data.modal >= (data.max + data.min) / 2 ? 'up' : 'down')
+              : '',
           };
         })
       );
 
-      console.log("FINAL MARKET:", results);
       setMarketData(results);
     };
 
     loadMarket();
-  }, [activeRegion, selectedDistrict]);
+  }, [activeRegion, selectedState, selectedDistrict]);
 
   // 🔍 SEARCH
   const filtered = marketData.filter(c =>
@@ -180,21 +203,27 @@ const MarketPricesPage: React.FC = () => {
           )}
 
           {filtered.map((crop, i) => (
-            <button
+            <div
               key={i}
-              onClick={() => navigate('/price-prediction')}
               className="w-full glass-card p-3 flex items-center gap-3"
             >
 
               <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
                 {crop.trend === 'up'
                   ? <TrendingUp className="text-primary" />
-                  : <TrendingDown className="text-destructive" />}
+                  : crop.trend === 'down'
+                    ? <TrendingDown className="text-destructive" />
+                    : <MapPin className="text-muted-foreground" />}
               </div>
 
               <div className="flex-1 text-left">
                 <p className="text-sm font-bold">{crop.display}</p>
                 <p className="text-[10px] text-muted-foreground">{crop.district}</p>
+                {crop.market && (
+                  <p className="text-[10px] text-muted-foreground truncate max-w-[180px]">
+                    {crop.market}{crop.date ? ` · ${crop.date}` : ''}
+                  </p>
+                )}
               </div>
 
               <div className="text-right">
@@ -202,11 +231,18 @@ const MarketPricesPage: React.FC = () => {
                   ₹ {crop.price ?? "--"}
                 </p>
                 <p className="text-[10px] text-muted-foreground">
-                  ₹{crop.min ?? "--"} - ₹{crop.max ?? "--"}
+                  {crop.min != null ? `₹${crop.min} - ₹${crop.max}` : "--"}
                 </p>
+                {crop.price == null ? (
+                  <p className="text-[9px] font-semibold text-amber-600">Unavailable</p>
+                ) : crop.source === 'msp_reference' ? (
+                  <p className="text-[9px] font-semibold text-amber-600">MSP reference</p>
+                ) : (
+                  <p className="text-[9px] font-semibold text-green-700">Real mandi data</p>
+                )}
               </div>
 
-            </button>
+            </div>
           ))}
 
         </div>

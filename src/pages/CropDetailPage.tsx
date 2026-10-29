@@ -20,7 +20,8 @@ const CropDetailPage: React.FC = () => {
   // 🔥 MAP DATA
   const crops = cropsData.map((crop: any, index: number) => {
     const name = crop.name || crop[0];
-    const score = crop.matchScore || Math.round((crop[1] || 0.8) * 100);
+    const score = crop.matchScore
+      || Math.round((crop.confidence ?? crop[1] ?? 0.8) * 100);
 
     return {
       id: name,

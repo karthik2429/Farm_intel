@@ -1,0 +1,52 @@
+name: daily-mandi-ingest
+
+# Accrues REAL mandi price history every day: fetches the AGMARKNET
+# "Current Daily Price" snapshot from api.data.gov.in and mirrors the
+# newest rows into the shared Supabase public.mandi_prices table.
+# Requires repository secrets:
+#   DATA_GOV_API_KEY      - your api.data.gov.in key
+#   SUPABASE_URL          - project URL (https://<ref>.supabase.co)
+#   SUPABASE_SERVICE_KEY  - service role key (ingest job only)
+
+on:
+  schedule:
+    - cron: "0 3 * * *"   # ~08:30 IST, shortly after AGMARKNET day rollover
+  workflow_dispatch: {}
+
+concurrency:
+  group: daily-mandi-ingest
+  cancel-in-progress: false
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install deps
+        run: pip install requests pandas pyarrow
+
+      - name: Run ingest (fetch rows, verify pages, mirror to Supabase)
+        working-directory: Farm_intel/backend
+        env:
+          DATA_GOV_API_KEY: ${{ secrets.DATA_GOV_API_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: |
+          set -euo pipefail
+          # Fetch today's snapshot. CI has no bundled Goa parquet, only the
+          # mirror step matters here; the local store is the read cache.
+          python daily_ingest.py
+
+      - name: Coverage report
+        if: always()
+        working-directory: Farm_intel/backend
+        run: |
+          python daily_ingest.py --status || true

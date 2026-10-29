@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { ArrowLeft, TrendingUp, Bell, AlertTriangle, Truck, CloudRain, ChevronDown, RefreshCw } from 'lucide-react';
 import BottomNav from '@/components/BottomNav';
-import { get14DayPredictions, getTrajectory as getTrajectoryData } from '@/lib/priceApi';
+import { get14DayPredictions, getTrajectory as getTrajectoryData, getCommodities, getMarkets } from '@/lib/priceApi';
 
 interface Prediction {
   district: string;
@@ -21,11 +21,15 @@ interface Trajectory {
   commodity: string;
   market: string;
   current_price: number;
+  mape?: number;
+  history_last?: string;
+  stale_days?: number;
   trajectory: Array<{
-    day_ahead: number;
+    day: number;
     date: string;
     predicted_price: number;
-    change_from_current_pct: number;
+    change_from_prev_pct?: number;
+    change_from_initial_pct?: number;
   }>;
 }
 
@@ -34,24 +38,50 @@ const PricePredictionPage: React.FC = () => {
   const navigate = useNavigate();
   
   const [predictions, setPredictions] = useState<Prediction[]>([]);
-  const [trajectories, setTrajectories] = useState<Trajectory[]>([]);
-  const [selectedCommodity, setSelectedCommodity] = useState<string>('');
+  const [trajectories, setTrajectories] = useState<Trajectory[]>([]);  const [selectedCommodity, setSelectedCommodity] = useState<string>('');
   const [selectedMarket, setSelectedMarket] = useState<string>('');
-  const [selectedDistrict, setSelectedDistrict] = useState<string>('North Goa');
+  // Default district comes from the farmer's saved profile when it has
+  // real mandi data; the real district list is loaded from the backend.
+  const [selectedDistrict, setSelectedDistrict] = useState<string>(
+    () => localStorage.getItem('profile_district') || 'North Goa'
+  );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   
-  const commodities = [
-    'Arecanut(Betelnut/Supari)', 'Banana', 'Brinjal', 'Cashewnuts', 'Chikoos(Sapota)',
-    'Coconut', 'Copra', 'Grapes', 'Green Chilli', 'Mango', 'Marigold(Loose)',
-    'Mousambi(Sweet Lime)', 'Onion', 'Orange', 'Papaya', 'Pineapple',
-    'Potato', 'Rose(Loose)', 'Water Melon', 'Apple'
-  ];
-  
-  const markets = {
-    'North Goa': ['Goa State Horticultural Corporation Ltd.', 'Mapusa', 'Pernem', 'Sanquelim', 'Valpol'],
-    'South Goa': ['Canacona', 'Curchorem', 'Margao', 'Ponda']
-  };
+  // Real commodity/district lists from the backend store; static fallbacks
+  const [commodities, setCommodities] = useState<string[]>([
+    'Banana', 'Coconut', 'Onion', 'Potato', 'Tomato'
+  ]);
+  const [districts, setDistricts] = useState<string[]>(['North Goa', 'South Goa']);
+  const [marketsByDistrict, setMarketsByDistrict] = useState<Record<string, string[]>>({});
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const [comms, marketRows] = await Promise.all([getCommodities(), getMarkets()]);
+        if (comms.length) setCommodities(comms);
+        const ds: string[] = [];
+        for (const { district } of marketRows) {
+          if (district && !ds.includes(district)) ds.push(district);
+        }
+        const byDistrict: Record<string, string[]> = {};
+        for (const { district, market } of marketRows) {
+          if (!district || !market) continue;
+          (byDistrict[district] ||= []).push(market);
+        }
+        if (ds.length) {
+          setDistricts(ds);
+          setMarketsByDistrict(byDistrict);
+          // keep the profile default only if real data covers it
+          const want = localStorage.getItem('profile_district');
+          setSelectedDistrict(prev =>
+            want && ds.includes(want) ? want : (prev && ds.includes(prev) ? prev : ds[0]));
+        }
+      } catch (e) {
+        console.warn('Market metadata unavailable; using fallback lists', e);
+      }
+    })();
+  }, []);
 
   const fetchPredictions = async () => {
     setLoading(true);
@@ -128,12 +158,11 @@ const PricePredictionPage: React.FC = () => {
                 onChange={(e) => setSelectedDistrict(e.target.value)}
                 className="w-full bg-input border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
               >
-                <option value="North Goa">North Goa</option>
-                <option value="South Goa">South Goa</option>
+                {districts.map(d => <option key={d} value={d}>{d}</option>)}
               </select>
             </div>
             <div>
-              <label className="text-xs text-muted-foreground block mb-1">{t('commodity') || 'Commodity'}</label>
+              <label className="text-xs text-muted-foreground block mb-1">Commodity</label>
               <select 
                 value={selectedCommodity} 
                 onChange={(e) => setSelectedCommodity(e.target.value)}
@@ -151,7 +180,7 @@ const PricePredictionPage: React.FC = () => {
                 className="w-full bg-input border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
               >
                 <option value="">All Markets</option>
-                {markets[selectedDistrict]?.map(m => <option key={m} value={m}>{m}</option>)}
+                {(marketsByDistrict[selectedDistrict] || []).map((m: string) => <option key={m} value={m}>{m}</option>)}
               </select>
             </div>
           </div>
@@ -161,7 +190,7 @@ const PricePredictionPage: React.FC = () => {
             className="w-full gradient-primary text-primary-foreground px-4 py-2 rounded-lg text-sm font-bold flex items-center justify-center gap-2"
           >
             <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-            {loading ? t('loading') || 'Loading...' : t('refresh') || 'Refresh Predictions'}
+            {loading ? 'Loading...' : 'Refresh Predictions'}
           </button>
         </div>
 
@@ -174,11 +203,11 @@ const PricePredictionPage: React.FC = () => {
         {/* Summary Cards */}
         <div className="grid grid-cols-2 gap-3">
           <div className="glass-card p-4">
-            <p className="text-xs text-muted-foreground">{t('totalCommodities') || 'Commodities Tracked'}</p>
+            <p className="text-xs text-muted-foreground">Commodities Tracked</p>
             <p className="text-2xl font-extrabold text-foreground mt-1">{new Set(predictions.map(p => p.commodity)).size}</p>
           </div>
           <div className="glass-card p-4">
-            <p className="text-xs text-muted-foreground">{t('avgChange') || 'Avg 14-Day Change'}</p>
+            <p className="text-xs text-muted-foreground">Avg 14-Day Change</p>
             <p className="text-2xl font-extrabold text-foreground mt-1">
               {predictions.length > 0 
                 ? `${(predictions.reduce((a, b) => a + b.predicted_change_pct, 0) / predictions.length).toFixed(1)}%`
@@ -256,20 +285,26 @@ const PricePredictionPage: React.FC = () => {
               </div>
             )}
 
-            <div className="mt-3 flex gap-2">
+            <div className="mt-3 flex flex-wrap gap-2">
               <span className="text-xs text-muted-foreground px-2 py-1 bg-secondary rounded">
                 Model: {selectedPrediction.model}
               </span>
               <span className="text-xs text-muted-foreground px-2 py-1 bg-secondary rounded">
-                As of: {selectedPrediction.prediction_date}
+                Backtest error: {trajectory?.mape ?? '—'}%
               </span>
+              {(trajectory as any)?.history_last && (
+                <span className="text-xs text-muted-foreground px-2 py-1 bg-secondary rounded">
+                  History until: {(trajectory as any).history_last}
+                  {(trajectory as any)?.stale_days > 2 ? ` (${(trajectory as any).stale_days}d ago)` : ''}
+                </span>
+              )}
             </div>
           </div>
         )}
 
         {/* All Predictions Table */}
         <div className="glass-card p-3">
-          <h3 className="text-sm font-bold text-foreground mb-2">{t('allPredictions') || 'All Predictions'}</h3>
+          <h3 className="text-sm font-bold text-foreground mb-2">All Predictions</h3>
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead>

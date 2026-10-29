@@ -22,3 +22,13 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# secrets & data
+.env
+*.db
+*.db-shm
+*.db-wal
+__pycache__/
+*.xlsx
+backend/mandi_price_history.csv
+backend/mandi_price_store.db

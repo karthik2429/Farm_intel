@@ -55,13 +55,15 @@ const CropRecommendationsPage: React.FC = () => {
   };
 
   // 🔥 ADD MARKET DATA
-  const enrichMarket = async (crops: any[], district: string) => {
+  const enrichMarket = async (crops: any[], district: string, state?: string) => {
     return await Promise.all(
       crops.map(async (crop) => {
         const cropName = crop.name || crop[0];
         const mapped = mapCropName(cropName);
 
-        const market = await getMarketPrice(mapped, district);
+        const market = district
+          ? await getMarketPrice(mapped, district, state)
+          : null;
 
         return {
           ...crop,
@@ -120,17 +122,24 @@ const CropRecommendationsPage: React.FC = () => {
       }
 
       // 🔥 EXTRACT CROPS
-      const crops = data["Top Crops"] || [];
+      const crops = data.alternatives ? data.alternatives.map((a: { crop: string; confidence: number }) => ({ name: a.crop, confidence: a.confidence })) : [];
+
+      // Add the top crop if not in alternatives
+      if (data.crop && !crops.some((c: { name: string }) => c.name === data.crop)) {
+        crops.unshift({ name: data.crop, confidence: data.confidence });
+      }
 
       if (!crops.length) {
         toast.error("No crops found");
         return;
       }
 
-      // 🔥 ADD MARKET DATA
+      // 🔥 ADD MARKET DATA (use the district + state the backend actually
+      // resolved so same-name districts price correctly)
       const enriched = await enrichMarket(
         crops.slice(0, 3),
-        selectedDistrict
+        data.district || selectedDistrict,
+        data.state || selectedState
       );
 
       console.log("ENRICHED:", enriched);

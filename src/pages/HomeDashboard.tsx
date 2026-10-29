@@ -2,12 +2,17 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useAuth } from '@/contexts/AuthContext';
-import { Cloud, Sprout, TrendingUp, RotateCcw, Brain, ChevronRight, Droplets, Wind } from 'lucide-react';
+import { Cloud, Sprout, TrendingUp, RotateCcw, Brain, ChevronRight, Droplets, Wind, MapPin, X } from 'lucide-react';
 import BottomNav from '@/components/BottomNav';
 import cropRice from '@/assets/crop-rice.jpg';
 import cropCotton from '@/assets/crop-cotton.jpg';
 import cropSugarcane from '@/assets/crop-sugarcane.jpg';
 import { getCropRecommendations } from '@/lib/api';
+import { allStates, getDistricts } from '@/lib/indian-locations';
+
+// "bengaluru urban" -> "Bengaluru Urban" (backend resolves names lowercase)
+const prettyName = (s?: string | null) =>
+  s ? s.replace(/\b\w/g, (c) => c.toUpperCase()) : '';
 
 const HomeDashboard: React.FC = () => {
 
@@ -21,37 +26,110 @@ const HomeDashboard: React.FC = () => {
     localStorage.getItem('profile_name') ||
     '';
 
-  const [recommendations, setRecommendations] = useState<any[]>([]);
+  // 🔥 LOCATION: profile village → GPS auto-detect → manual picker.
+  // No hidden default: if detection fails the user chooses state/district.
+  const [locSource, setLocSource] = useState<'profile' | 'gps' | 'manual' | 'detecting' | 'none'>('detecting');
+  const [locState, setLocState] = useState('');
+  const [locDistrict, setLocDistrict] = useState('');
+  const [resolvedLoc, setResolvedLoc] = useState<{ district: string; state: string } | null>(null);
+  const [locCoords, setLocCoords] = useState<{ lat: number; lon: number } | null>(null);
+  const [showLocPicker, setShowLocPicker] = useState(false);
+  const [locVersion, setLocVersion] = useState(0); // bump to refetch
+  interface RecRow {
+    name: string; district: string; period: string;
+    score: string; img: string;
+  }
+  const [recommendations, setRecommendations] = useState<RecRow[]>([]);
+  const [loadingRecs, setLoadingRecs] = useState(true);
 
+  // Resolve initial location once: profile first, then GPS auto-detect.
+  // If both fail we don't guess a district - we ask the user to pick one.
   useEffect(() => {
-    console.log("Dashboard useEffect running"); // ✅ MUST SHOW
+    const pState = localStorage.getItem('profile_state');
+    const pDistrict = localStorage.getItem('profile_district');
+    if (pState && pDistrict && getDistricts(pState).includes(pDistrict)) {
+      setLocState(pState);
+      setLocDistrict(pDistrict);
+      setLocCoords(null);
+      setLocSource('profile');
+      setLocVersion(v => v + 1);
+      return;
+    }
+    let settled = false;
+    const settleNoLocation = () => {
+      if (settled) return;
+      settled = true;
+      setLocSource('none');
+      setShowLocPicker(true); // open the picker so they can choose
+    };
+    if (navigator.geolocation) {
+      // Some webviews hang on the permission prompt - don't block forever.
+      const gpsTimeout = setTimeout(settleNoLocation, 4000);
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          clearTimeout(gpsTimeout);
+          if (settled) return;
+          settled = true;
+          setLocCoords({ lat: pos.coords.latitude, lon: pos.coords.longitude });
+          setLocSource('gps');
+          setLocVersion(v => v + 1);
+        },
+        () => {
+          clearTimeout(gpsTimeout);
+          settleNoLocation();
+        },
+        { timeout: 3500 }
+      );
+    } else {
+      settleNoLocation();
+    }
+  }, []);
 
-    const fetchData = async (lat: number, lon: number) => {
+  // Fetch recommendations for the resolved location. The location values
+  // are intentionally read at bump time (locVersion) so a change always
+  // refetches exactly once.
+  useEffect(() => {
+    if (locVersion === 0) return;
+
+    const fetchData = async () => {
+      setLoadingRecs(true);
       try {
-        console.log("Fetching with:", lat, lon);
-
-        const payload = {
-          lat,
-          lon,
-          season: "kharif",
-          mode: "coords"
-        };
+        const payload: Record<string, unknown> = { season: "kharif" };
+        if (locSource === 'gps' && locCoords) {
+          payload.lat = locCoords.lat;
+          payload.lon = locCoords.lon;
+          payload.mode = "coords";
+        } else if (locState && locDistrict) {
+          payload.state = locState;
+          payload.district = locDistrict;
+          payload.mode = "auto";
+        } else {
+          return; // no usable location yet
+        }
 
         const data = await getCropRecommendations(payload);
 
-        console.log("DASHBOARD RESPONSE:", data); // 🔥
-
         if (!data || !data["Top Crops"]) {
-          console.log("No data from backend");
           return;
         }
 
-        const mapped = data["Top Crops"].map((c: any, i: number) => {
+        // The backend tells us which district/state it actually resolved
+        // (GPS → nearest known district); show that to the farmer.
+        setResolvedLoc({
+          district: prettyName(data.district),
+          state: prettyName(data.state),
+        });
+
+        const mapped = data["Top Crops"].map((c: [string, number], i: number) => {
           const name = c[0];
           const score = Math.round(c[1] * 100);
+          const displayName = name.charAt(0).toUpperCase() + name.slice(1);
 
           return {
-            name: name.charAt(0).toUpperCase() + name.slice(1),
+            name: displayName,
+            district: data.district
+              ? `${prettyName(data.district)}${data.state ? `, ${prettyName(data.state)}` : ''}`
+              : (locSource === 'gps' ? 'your location' : prettyName(locDistrict)),
             period:
               i === 0 ? '4 Months • High Water' :
               i === 1 ? '10-18 Months • High Water' :
@@ -68,33 +146,29 @@ const HomeDashboard: React.FC = () => {
 
       } catch (err) {
         console.error("API ERROR:", err);
+      } finally {
+        setLoadingRecs(false);
       }
     };
 
-    // ✅ TRY LOCATION
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        (pos) => {
-          console.log("Location success"); // ✅
-          fetchData(pos.coords.latitude, pos.coords.longitude);
-        },
-        (err) => {
-          console.log("Location failed → using fallback"); // ✅
-          fetchData(15.8497, 74.4977); // 🔥 fallback (Belagavi)
-        }
-      );
-    } else {
-      console.log("No geolocation → fallback"); // ✅
-      fetchData(15.8497, 74.4977);
-    }
-
-  }, []);
+    fetchData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [locVersion]);
   const smartActions = [
     { icon: Sprout, label: t('cropRecs'), path: '/crop-recommendations' },
     { icon: TrendingUp, label: t('market'), path: '/market' },
     { icon: RotateCcw, label: t('rotation'), path: '/crop-rotation' },
     { icon: Brain, label: t('predict'), path: '/price-prediction' },
   ];
+
+  // 📍 Display helpers - GPS resolves to whatever district the backend
+  // matched; manual/profile uses the picked names directly.
+  const displayDistrict = locSource === 'gps'
+    ? (resolvedLoc?.district || 'your location')
+    : prettyName(locDistrict);
+  const displayState = locSource === 'gps'
+    ? resolvedLoc?.state
+    : prettyName(locState);
 
   return (
     <div className="min-h-screen bg-background pb-20">
@@ -140,6 +214,97 @@ const HomeDashboard: React.FC = () => {
             </div>
           </div>
         </div>
+
+        {/* 📍 Location chip - shows which district the cards are for */}
+        <button
+          onClick={() => setShowLocPicker(s => !s)}
+          className="w-full mt-2 glass-card px-3 py-2 flex items-center gap-2"
+        >
+          <MapPin className="w-3.5 h-3.5 text-primary" />
+          <span className="text-xs font-bold text-foreground flex-1 text-left truncate">
+            {locSource === 'detecting' && 'Detecting your location…'}
+            {locSource === 'none' && 'Choose your state & district'}
+            {locSource !== 'detecting' && locSource !== 'none' && (
+              <>
+                {displayDistrict}{displayState ? `, ${displayState}` : ''}
+                {locSource === 'gps' && ' (auto-detected)'}
+              </>
+            )}
+          </span>
+          <span className="text-[10px] text-primary font-semibold">
+            {locSource === 'detecting' ? '…' : 'Change'}
+          </span>
+        </button>
+
+        {showLocPicker && (
+          <div className="glass-card p-3 mt-2 space-y-2">
+            <div className="flex justify-between items-center">
+              <p className="text-xs font-bold text-muted-foreground">YOUR LOCATION</p>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => {
+                    setShowLocPicker(false);
+                    setLocSource('detecting');
+                    if (navigator.geolocation) {
+                      navigator.geolocation.getCurrentPosition(
+                        (pos) => {
+                          setLocCoords({ lat: pos.coords.latitude, lon: pos.coords.longitude });
+                          setLocState('');
+                          setLocDistrict('');
+                          setLocSource('gps');
+                          setLocVersion(v => v + 1);
+                        },
+                        () => setLocSource(locState ? 'manual' : 'none'),
+                        { timeout: 5000 }
+                      );
+                    }
+                  }}
+                  className="text-[10px] font-bold text-primary"
+                >
+                  📍 Auto Detect
+                </button>
+                <button onClick={() => setShowLocPicker(false)}>
+                  <X className="w-3.5 h-3.5 text-muted-foreground" />
+                </button>
+              </div>
+            </div>
+            <select
+              value={locState}
+              onChange={(e) => {
+                const s = e.target.value;
+                setLocState(s);
+                const ds = getDistricts(s);
+                setLocDistrict(ds.length ? ds[0] : '');
+              }}
+              className="w-full bg-secondary rounded px-3 py-2 text-sm"
+            >
+              <option value="">Select State</option>
+              {allStates.map(s => <option key={s}>{s}</option>)}
+            </select>
+            <select
+              value={locDistrict}
+              onChange={(e) => setLocDistrict(e.target.value)}
+              className="w-full bg-secondary rounded px-3 py-2 text-sm"
+              disabled={!locState}
+            >
+              <option value="">Select District</option>
+              {getDistricts(locState).map(d => <option key={d}>{d}</option>)}
+            </select>
+            <button
+              onClick={() => {
+                if (!locState || !locDistrict) return;
+                setLocCoords(null);
+                setLocSource('manual');
+                setShowLocPicker(false);
+                setLocVersion(v => v + 1);
+              }}
+              disabled={!locState || !locDistrict}
+              className="w-full gradient-primary py-2 rounded-lg text-sm font-bold disabled:opacity-50"
+            >
+              Use This Location
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Actions */}
@@ -167,11 +332,24 @@ const HomeDashboard: React.FC = () => {
       <div className="px-5 mb-4">
         <h2 className="text-sm font-bold text-foreground mb-3">
           {t('topRecommendations')}
+          {displayDistrict && (
+            <span className="text-[10px] font-semibold text-muted-foreground ml-2">
+              for {displayDistrict}
+            </span>
+          )}
         </h2>
 
       <div className="space-y-2">
-        {recommendations.length === 0 ? (
-          <p className="text-xs text-muted-foreground">Loading...</p>
+        {loadingRecs ? (
+          <p className="text-xs text-muted-foreground">
+            Loading recommendations for {displayDistrict || 'your area'}…
+          </p>
+        ) : recommendations.length === 0 ? (
+          <p className="text-xs text-muted-foreground">
+            {locSource === 'none'
+              ? 'Choose your state & district above to see recommendations.'
+              : 'No recommendations available right now.'}
+          </p>
         ) : (
           recommendations.map((rec, i) => (
             <button
