@@ -3,19 +3,21 @@
 Daemonizing launcher for the FarmIntel backend.
 
 Detaches uvicorn into its own session so it keeps running after the
-terminal that started it closes. Logs go to /tmp/farmintel_backend.log.
+terminal that started it closes. The port comes from BACKEND_PORT.
 
 Usage:
     python serve.py            # start (if not already running)
-    python serve.py --status   # show whether port 8000 is serving
+    python serve.py --status   # show whether the port is serving
 """
 import os
-import sys
 import socket
+import sys
 import urllib.request
 
+from config import settings
+
 VENV_PY = sys.executable  # run with the collab venv python
-PORT = 8000
+PORT = settings.backend_port
 
 
 def port_open() -> bool:

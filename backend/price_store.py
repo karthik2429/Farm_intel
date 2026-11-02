@@ -26,9 +26,10 @@ from typing import Iterable, List, Optional
 
 import pandas as pd
 
+from config import settings  # single env entry point
+
 _HERE = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.environ.get("FARMINTEL_PRICE_DB",
-                         os.path.join(_HERE, "mandi_price_store.db"))
+DB_PATH = settings.price_db_override or os.path.join(_HERE, "mandi_price_store.db")
 
 _COLS = ("date", "state", "district", "market", "commodity", "variety",
          "min_price", "max_price", "modal_price", "source", "fetched_at")

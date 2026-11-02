@@ -41,13 +41,14 @@ import price_forecast  # noqa: E402
 import crop_info  # noqa: E402
 import price_store  # noqa: E402
 import chat as chat_service  # noqa: E402
+from config import settings, service_status  # noqa: E402
 
 app = FastAPI(title="FarmIntel API", version="3.0.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=settings.cors_origins,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -222,7 +223,18 @@ async def health_check():
         "price_model": price_engine.model_loaded(),
         "price_error": price_engine.load_error(),
         "version": "3.0.0",
+        "port": settings.backend_port,
     }
+
+
+@app.get("/config/status")
+async def config_status():
+    """
+    Which optional services are configured. Booleans only — a key value is
+    never returned. The dev-only "Setup status" panel reads this to show
+    exactly what is missing and where to get it.
+    """
+    return service_status()
 
 
 # ─────────────────────── Crop recommendation ─────────────────────────────

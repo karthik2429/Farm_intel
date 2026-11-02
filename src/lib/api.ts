@@ -1,4 +1,6 @@
-const BACKEND = "http://127.0.0.1:8000";
+import { env } from "@/lib/env";
+
+const BACKEND = env.apiBaseUrl;
 
 // Abort a hanging request instead of freezing the UI forever
 const withTimeout = (ms: number) => {

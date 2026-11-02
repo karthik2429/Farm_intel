@@ -52,9 +52,10 @@ def supabase_mirror(limit_days: int = 3) -> int:
     the environment. Upserts with on_conflict=date,state,district,market,
     commodity,variety — matching the migration's unique constraint.
     """
-    url = (os.environ.get("SUPABASE_URL")
-           or os.environ.get("VITE_SUPABASE_URL") or "").rstrip("/")
-    key = os.environ.get("SUPABASE_SERVICE_KEY") or ""
+    from config import settings
+
+    url = settings.supabase_url.rstrip("/")
+    key = settings.supabase_service_key
     if not url or not key:
         print("[supabase] SUPABASE_URL / SUPABASE_SERVICE_KEY not set — "
               "skipping central mirror (local store only)")

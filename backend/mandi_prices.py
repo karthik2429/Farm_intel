@@ -101,13 +101,15 @@ _LIVE_URL = ("https://api.data.gov.in/resource/"
 
 # Reuse the shared .env loader so the server and ingest jobs both see
 # DATA_GOV_API_KEY from Farm_intel/.env without a dotenv dependency.
+from config import settings
+
 try:
     import mandi_ingest  # noqa: F401  (imports price_store; no cycle)
     mandi_ingest.load_env()
 except ImportError:
     pass
 
-_LIVE_KEY = os.environ.get("DATA_GOV_API_KEY", "")
+_LIVE_KEY = settings.data_gov_api_key
 _LIVE_TIMEOUT = 5.0
 _PROBE_EVERY = 600
 

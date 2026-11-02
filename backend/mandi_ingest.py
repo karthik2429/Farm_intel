@@ -32,33 +32,20 @@ RESOURCE_ID = "9ef84268-d588-465a-a308-a864a43d0070"
 LIVE_URL = f"https://api.data.gov.in/resource/{RESOURCE_ID}"
 
 
-def load_env() -> None:
-    """Load Farm_intel/.env (KEY=VALUE lines) into os.environ for keys that
-    are not already set. No python-dotenv dependency; safe to call twice."""
-    env_file = Path(__file__).resolve().parent.parent / ".env"
-    if not env_file.exists():
-        return
-    try:
-        for line in env_file.read_text().splitlines():
-            line = line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, _, value = line.partition("=")
-            os.environ.setdefault(key.strip(), value.strip().strip('"'))
-    except OSError:
-        pass
+from config import load_env_file, settings  # noqa: E402  (single env entry point)
 
-
+# Backwards-compatible alias: some scripts call mandi_ingest.load_env().
+load_env = load_env_file
 load_env()
 
-# DATA_GOV_API_KEY from env; never hardcode a key in two places again.
-API_KEY = os.environ.get("DATA_GOV_API_KEY", "")
+# Read through the typed config module only; never hardcode a key twice.
+API_KEY = settings.data_gov_api_key
 
 if API_KEY:
-    logger.info("DATA_GOV_API_KEY loaded (%s…%s)", API_KEY[:8], API_KEY[-4:])
+    logger.info("DATA_GOV_API_KEY configured (%s…%s)", API_KEY[:4], API_KEY[-4:])
 
 PAGE_LIMIT = 2000
-MAX_ROWS_PER_RUN = int(os.environ.get("FARMINTEL_INGEST_MAX_ROWS", "200000"))
+MAX_ROWS_PER_RUN = settings.ingest_max_rows
 REQUEST_TIMEOUT = 45
 
 
@@ -154,7 +141,7 @@ def ingest_state(state: str) -> int:
 
 def _find_goa_parquet() -> Optional[Path]:
     candidates = [
-        Path(os.environ.get("FARMINTEL_DATA_DIR", ".")) / "historical_prices" / "goa_merged",
+        Path(settings.data_dir) / "historical_prices" / "goa_merged",
         Path(__file__).resolve().parents[2] / "data" / "historical_prices" / "goa_merged",
         Path(__file__).resolve().parents[3] / "data" / "historical_prices" / "goa_merged",
     ]

@@ -25,10 +25,24 @@ dist-ssr
 
 # secrets & data
 .env
+.env.local
+.env.*.local
 *.db
 *.db-shm
 *.db-wal
+*.sqlite
+*.sqlite3
 __pycache__/
 *.xlsx
 backend/mandi_price_history.csv
 backend/mandi_price_store.db
+
+# local run artifacts
+.run/
+/screenshots/tmp/
+test-results/
+playwright-report/
+
+# env templates are tracked on purpose
+!.env.example
+!.env.local.example
