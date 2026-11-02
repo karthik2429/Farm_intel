@@ -1,376 +1,399 @@
-import React, { useState, useEffect } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
+import * as React from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { ArrowDownRight, ArrowUpRight, CalendarDays, Database, Gauge, Info, TrendingUp } from 'lucide-react';
+import { AppShell } from '@/components/ui-kit/AppShell';
+import {
+  Badge,
+  Card,
+  CardLabel,
+  Chip,
+  EmptyState,
+  ErrorState,
+  PageHeader,
+  PriceCardSkeleton,
+  ProgressRing,
+  Skeleton,
+} from '@/components/ui-kit/core';
+import { ChartLegend, ForecastChart } from '@/components/ui-kit/charts';
+import { Select } from '@/components/ui-kit/form';
+import { CropThumb } from '@/components/ui-kit/PriceCard';
+import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
-import { ArrowLeft, TrendingUp, Bell, AlertTriangle, Truck, CloudRain, ChevronDown, RefreshCw } from 'lucide-react';
-import BottomNav from '@/components/BottomNav';
-import { get14DayPredictions, getTrajectory as getTrajectoryData, getCommodities, getMarkets } from '@/lib/priceApi';
-
-interface Prediction {
-  district: string;
-  commodity: string;
-  market: string;
-  current_price: number;
-  predicted_price_14d: number;
-  predicted_change_pct: number;
-  prediction_date: string;
-  model: string;
-}
+import { useProfile, defaultLocation } from '@/lib/profile';
+import { getMarketHistory, getMarketPrice } from '@/lib/marketApi';
+import { getCommodities } from '@/lib/priceApi';
+import { env } from '@/lib/env';
+import { cn } from '@/lib/utils';
 
 interface Trajectory {
-  district: string;
+  day: number;
+  date: string;
+  predicted_price: number;
+  ci_low: number;
+  ci_high: number;
+  change_from_initial_pct: number;
+}
+
+interface Forecast {
   commodity: string;
-  market: string;
+  district?: string | null;
+  state?: string | null;
+  market?: string | null;
+  scope_level?: string;
   current_price: number;
-  mape?: number;
-  history_last?: string;
-  stale_days?: number;
-  trajectory: Array<{
-    day: number;
-    date: string;
-    predicted_price: number;
-    change_from_prev_pct?: number;
-    change_from_initial_pct?: number;
-  }>;
+  predicted_change_pct: number;
+  mape: number;
+  model?: string;
+  backtest_folds?: number;
+  history_first: string;
+  history_last: string;
+  history_obs: number;
+  stale_days: number;
+  signal?: string;
+  trajectory: Trajectory[];
 }
 
 const PricePredictionPage: React.FC = () => {
   const { t } = useLanguage();
+  const { user } = useAuth();
   const navigate = useNavigate();
-  
-  const [predictions, setPredictions] = useState<Prediction[]>([]);
-  const [trajectories, setTrajectories] = useState<Trajectory[]>([]);
-  // Pre-filled when the farmer arrives here from a crop detail card.
-  const incoming = (useLocation().state || {}) as { commodity?: string; district?: string };
-  const [selectedCommodity, setSelectedCommodity] = useState<string>(incoming.commodity || '');
-  const [selectedMarket, setSelectedMarket] = useState<string>('');
-  // Default district comes from the farmer's saved profile when it has
-  // real mandi data; the real district list is loaded from the backend.
-  const [selectedDistrict, setSelectedDistrict] = useState<string>(
-    () => localStorage.getItem('profile_district') || 'North Goa'
-  );
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  
-  // Real commodity/district lists from the backend store; static fallbacks
-  const [commodities, setCommodities] = useState<string[]>([
-    'Banana', 'Coconut', 'Onion', 'Potato', 'Tomato'
-  ]);
-  const [districts, setDistricts] = useState<string[]>(['North Goa', 'South Goa']);
-  const [marketsByDistrict, setMarketsByDistrict] = useState<Record<string, string[]>>({});
+  const [params, setParams] = useSearchParams();
+  const { profile } = useProfile(user?.id, user?.email);
+  const loc = defaultLocation(profile);
 
-  useEffect(() => {
-    (async () => {
-      try {
-        const [comms, marketRows] = await Promise.all([getCommodities(), getMarkets()]);
-        if (comms.length) setCommodities(comms);
-        // from the crop-detail handoff: match the crop against the real
-        // commodity list when possible, else pass it straight
-        if (incoming.commodity) {
-          const matched = comms.find(
-            (c) => c.toLowerCase() === incoming.commodity!.toLowerCase());
-          setSelectedCommodity(matched || incoming.commodity);
-        }
-        const ds: string[] = [];
-        for (const { district } of marketRows) {
-          if (district && !ds.includes(district)) ds.push(district);
-        }
-        const byDistrict: Record<string, string[]> = {};
-        for (const { district, market } of marketRows) {
-          if (!district || !market) continue;
-          (byDistrict[district] ||= []).push(market);
-        }
-        if (ds.length) {
-          setDistricts(ds);
-          setMarketsByDistrict(byDistrict);
-          // the handed-over district wins over the profile default when it
-          // has real mandi coverage
-          const want = incoming.district || localStorage.getItem('profile_district');
-          setSelectedDistrict(prev =>
-            want && ds.includes(want) ? want : (prev && ds.includes(prev) ? prev : ds[0]));
-        }
-      } catch (e) {
-        console.warn('Market metadata unavailable; using fallback lists', e);
-      }
-    })();
+  const [commodities, setCommodities] = React.useState<string[]>([]);
+  const [crop, setCrop] = React.useState(params.get('crop') || profile?.crops?.[0] || 'Tomato');
+  const [forecast, setForecast] = React.useState<Forecast | null>(null);
+  const [history, setHistory] = React.useState<{ date: string; price: number }[]>([]);
+  const [loading, setLoading] = React.useState(true);
+  const [error, setError] = React.useState<string | null>(null);
+  const [coverage, setCoverage] = React.useState<{ first: string; last: string; obs: number; markets: number } | null>(null);
+
+  React.useEffect(() => {
+    getCommodities()
+      .then((list) => setCommodities(list || []))
+      .catch(() => setCommodities([]));
   }, []);
 
-  const fetchPredictions = async () => {
+  React.useEffect(() => {
+    const fromUrl = params.get('crop');
+    if (fromUrl && fromUrl !== crop) setCrop(fromUrl);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  React.useEffect(() => {
+    let alive = true;
     setLoading(true);
     setError(null);
-    try {
-      const [predictionData, trajectoryData] = await Promise.all([
-        get14DayPredictions({
-          district: selectedDistrict || undefined,
-          commodity: selectedCommodity || undefined,
-          market: selectedMarket || undefined,
-        }),
-        getTrajectoryData({
-          district: selectedDistrict || undefined,
-          commodity: selectedCommodity || undefined,
-          market: selectedMarket || undefined,
-        }),
+
+    const run = async () => {
+      const [hist, live] = await Promise.all([
+        getMarketHistory(crop, loc.district, loc.state, 90).catch(() => null),
+        getMarketPrice(crop, loc.district, loc.state).catch(() => null),
       ]);
+      if (!alive) return;
+      setHistory(hist?.points || []);
 
-      if ((predictionData as any)?.error) {
-        throw new Error((predictionData as any).error);
+      const res = await fetch(`${env.apiBaseUrl}/predict/14day`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          district: loc.district || null,
+          commodity: crop,
+          market: 'All',
+          state: loc.state || null,
+        }),
+      }).catch(() => null);
+
+      if (!alive) return;
+      if (!res) {
+        setError('The forecast service is not reachable. Start the backend with ./start.sh.');
+        setForecast(null);
+        setLoading(false);
+        return;
       }
-
-      setPredictions(predictionData);
-      setTrajectories(trajectoryData);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load predictions');
-      console.error('Prediction fetch error:', err);
-    } finally {
+      if (res.status === 404) {
+        const body = await res.json().catch(() => ({}));
+        setError(
+          body?.detail ||
+            `Not enough real mandi history yet to forecast ${crop}. Daily ingestion keeps accruing history.`,
+        );
+        setForecast(null);
+        setLoading(false);
+        return;
+      }
+      if (!res.ok) {
+        setError(`Forecast failed (HTTP ${res.status}).`);
+        setForecast(null);
+        setLoading(false);
+        return;
+      }
+      const data = await res.json();
+      const entry: Forecast | null = Array.isArray(data) ? data[0] : data;
+      setForecast(entry);
+      if (entry) {
+        setCoverage({
+          first: entry.history_first,
+          last: entry.history_last,
+          obs: entry.history_obs,
+          markets: 0,
+        });
+      }
+      // live price (may be null) is only used for the "today" figure fallback
+      if (live?.modal != null && entry && !entry.current_price) {
+        setForecast({ ...entry, current_price: live.modal });
+      }
       setLoading(false);
-    }
-  };
+    };
 
-  useEffect(() => {
-    fetchPredictions();
-  }, [selectedDistrict, selectedCommodity, selectedMarket]);
+    void run();
+    return () => {
+      alive = false;
+    };
+  }, [crop, loc.district, loc.state]);
 
-  const getFilteredPredictions = () => {
-    return predictions;
-  };
+  const best = React.useMemo(() => {
+    if (!forecast?.trajectory?.length) return null;
+    return forecast.trajectory.reduce((a, b) =>
+      b.predicted_price > a.predicted_price ? b : a,
+    );
+  }, [forecast]);
 
-  const getTrajectoryForSelection = (commodity: string, market: string) => {
-    return trajectories.find(t => t.commodity === commodity && t.market === market);
-  };
-
-  const formatPrice = (price: number) => {
-    return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(price);
-  };
-
-  const selectedPrediction = selectedCommodity && selectedMarket 
-    ? predictions.find(p => p.commodity === selectedCommodity && p.market === selectedMarket)
-    : (predictions[0] || null);
-
-  const trajectory = selectedPrediction 
-    ? getTrajectoryForSelection(selectedPrediction.commodity, selectedPrediction.market)
-    : null;
+  const change = forecast?.predicted_change_pct ?? 0;
+  const up = change >= 0;
 
   return (
-    <div className="min-h-screen bg-background pb-20">
-      <div className="px-5 pt-5 pb-3 flex items-center gap-3">
-        <button onClick={() => navigate(-1)} className="w-8 h-8 rounded-full bg-secondary flex items-center justify-center">
-          <ArrowLeft className="w-4 h-4 text-foreground" />
-        </button>
-        <h1 className="text-lg font-extrabold text-foreground">{t('pricePrediction')}</h1>
+    <AppShell>
+      <PageHeader
+        title={t('pricePrediction')}
+        subtitle={`${loc.label || 'All India'} · 14-day Holt-Winters forecast`}
+      />
+
+      <div className="mb-3 flex items-center gap-2">
+        <CropThumb crop={crop} size={44} />
+        <Select
+          label="Commodity"
+          value={crop}
+          onChange={(v) => {
+            setCrop(v);
+            setParams({ crop: v });
+          }}
+          options={(commodities.length ? commodities : [crop]).map((c) => ({ value: c, label: c }))}
+          placeholder="Pick a commodity"
+        />
       </div>
 
-      <div className="px-5 space-y-4">
-        {/* Filters */}
-        <div className="glass-card p-3 space-y-3">
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-xs text-muted-foreground block mb-1">{t('district') || 'District'}</label>
-              <select 
-                value={selectedDistrict} 
-                onChange={(e) => setSelectedDistrict(e.target.value)}
-                className="w-full bg-input border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
-              >
-                {districts.map(d => <option key={d} value={d}>{d}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="text-xs text-muted-foreground block mb-1">Commodity</label>
-              <select 
-                value={selectedCommodity} 
-                onChange={(e) => setSelectedCommodity(e.target.value)}
-                className="w-full bg-input border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
-              >
-                <option value="">All Commodities</option>
-                {commodities.map(c => <option key={c} value={c}>{c}</option>)}
-              </select>
-            </div>
-            <div className="col-span-2">
-              <label className="text-xs text-muted-foreground block mb-1">{t('market') || 'Market'}</label>
-              <select 
-                value={selectedMarket} 
-                onChange={(e) => setSelectedMarket(e.target.value)}
-                className="w-full bg-input border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
-              >
-                <option value="">All Markets</option>
-                {(marketsByDistrict[selectedDistrict] || []).map((m: string) => <option key={m} value={m}>{m}</option>)}
-              </select>
-            </div>
-          </div>
-          <button 
-            onClick={fetchPredictions}
-            disabled={loading}
-            className="w-full gradient-primary text-primary-foreground px-4 py-2 rounded-lg text-sm font-bold flex items-center justify-center gap-2"
-          >
-            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-            {loading ? 'Loading...' : 'Refresh Predictions'}
-          </button>
+      {loading ? (
+        <div className="space-y-3">
+          <Card>
+            <Skeleton className="h-4 w-24" />
+            <Skeleton className="mt-2 h-10 w-40" />
+            <Skeleton className="mt-3 h-20 w-full" />
+          </Card>
+          <PriceCardSkeleton />
         </div>
-
-        {error && (
-          <div className="glass-card p-3 border-l-4 border-destructive">
-            <p className="text-xs text-destructive">{error}</p>
-          </div>
-        )}
-
-        {/* Summary Cards */}
-        <div className="grid grid-cols-2 gap-3">
-          <div className="glass-card p-4">
-            <p className="text-xs text-muted-foreground">Commodities Tracked</p>
-            <p className="text-2xl font-extrabold text-foreground mt-1">{new Set(predictions.map(p => p.commodity)).size}</p>
-          </div>
-          <div className="glass-card p-4">
-            <p className="text-xs text-muted-foreground">Avg 14-Day Change</p>
-            <p className="text-2xl font-extrabold text-foreground mt-1">
-              {predictions.length > 0 
-                ? `${(predictions.reduce((a, b) => a + b.predicted_change_pct, 0) / predictions.length).toFixed(1)}%`
-                : '—'}
-            </p>
-          </div>
-        </div>
-
-        {/* Selected Commodity Detail */}
-        {selectedPrediction && (
-          <div className="glass-card p-4 border-l-4 border-primary">
-            <div className="flex items-start justify-between gap-2">
+      ) : error || !forecast ? (
+        <EmptyState
+          title="No forecast for this crop yet"
+          description={error || 'Not enough real mandi history for this commodity and district.'}
+          action={
+            <div className="flex flex-wrap justify-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setCrop('Tomato');
+                  setParams({ crop: 'Tomato' });
+                }}
+                className="rounded-full bg-primary px-4 py-2 text-[12.5px] font-700 text-primary-foreground"
+              >
+                Try Tomato
+              </button>
+              <button
+                type="button"
+                onClick={() => navigate('/market')}
+                className="rounded-full border border-border px-4 py-2 text-[12.5px] font-600"
+              >
+                Browse market
+              </button>
+            </div>
+          }
+        />
+      ) : (
+        <div className="space-y-3">
+          {/* summary */}
+          <Card>
+            <div className="flex items-start justify-between gap-3">
               <div>
-                <p className="text-xs text-muted-foreground">{selectedPrediction.district} • {selectedPrediction.market}</p>
-                <p className="text-lg font-extrabold text-foreground">{selectedPrediction.commodity}</p>
+                <CardLabel>Current price</CardLabel>
+                <div className="mt-1 flex items-baseline gap-1">
+                  <span className="text-[18px] font-600 text-ink-muted">₹</span>
+                  <span className="price-xl font-display font-800 tnum">
+                    {Math.round(forecast.current_price).toLocaleString('en-IN')}
+                  </span>
+                  <span className="ml-0.5 text-[12px] text-ink-muted">/quintal</span>
+                </div>
+                <p className="mt-1 text-[11.5px] text-ink-muted">
+                  {forecast.market || loc.district || forecast.state || 'India'} ·{' '}
+                  {forecast.history_last}
+                </p>
               </div>
               <div className="text-right">
-                <p className="text-xs text-muted-foreground">Current Price</p>
-                <p className="text-xl font-extrabold text-foreground">{formatPrice(selectedPrediction.current_price)}/q</p>
+                <Badge tone={up ? 'live' : 'danger'}>
+                  {up ? <ArrowUpRight className="h-3 w-3" strokeWidth={2.4} /> : <ArrowDownRight className="h-3 w-3" strokeWidth={2.4} />}
+                  {Math.abs(change).toFixed(1)}% in 14d
+                </Badge>
+                <div className="mt-2 flex items-center justify-end gap-1.5">
+                  <Gauge className="h-3.5 w-3.5 text-ink-muted" strokeWidth={2} />
+                  <span className="text-[11px] text-ink-muted">MAPE</span>
+                  <span className="text-[12px] font-700 tnum">{forecast.mape.toFixed(1)}%</span>
+                </div>
               </div>
             </div>
-            
-            <div className="mt-3 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <TrendingUp className={`w-4 h-4 ${selectedPrediction.predicted_change_pct >= 0 ? 'text-green-500' : 'text-red-500'}`} />
-                <span className={`text-sm font-bold ${selectedPrediction.predicted_change_pct >= 0 ? 'text-green-500' : 'text-red-500'}`}>
-                  {selectedPrediction.predicted_change_pct >= 0 ? '+' : ''}{selectedPrediction.predicted_change_pct.toFixed(1)}%
-                </span>
-              </div>
-              <span className="text-xs font-bold text-primary">
-                14-Day: {formatPrice(selectedPrediction.predicted_price_14d)}/q
-              </span>
-            </div>
 
-            {/* Trajectory Chart */}
-            {trajectory && (
-              <div className="mt-3">
-                <h3 className="text-sm font-bold text-foreground mb-2">Daily Outlook</h3>
-                <div className="h-24 flex items-end gap-1 mb-2">
-                  {trajectory.trajectory.map((point, i) => {
-                      const changePct = (point.change_from_prev_pct ?? point.change_from_initial_pct) ?? 0;
-                    return (
-                      <div
-                        key={i}
-                        className="flex-1 rounded-t transition-all"
-                        style={{
-                            height: `${Math.min(100, Math.max(8, 50 + changePct * 2))}%`,
-                            background: changePct >= 0 
-                            ? 'hsl(152 65% 45% / 0.6)' 
-                            : 'hsl(0 65% 45% / 0.6)',
-                          borderTop: `2px dashed ${changePct >= 0 ? 'hsl(152 65% 45%)' : 'hsl(0 65% 45%)'}`,
-                        }}
-                      />
-                    );
-                  })}
-                </div>
-                <div className="flex items-center justify-between text-[10px] text-muted-foreground">
-                  <span>Day 1</span>
-                  <span>Day 14</span>
-                </div>
-                <div className="mt-2 space-y-1">
-                  {trajectory.trajectory.map((point, i) => {
-                    const dayChange = point.change_from_prev_pct ?? point.change_from_initial_pct ?? 0;
-                    return (
-                      <div key={i} className="flex items-center justify-between text-[11px] text-muted-foreground">
-                        <span>{point.date}</span>
-                        <span className="font-semibold text-foreground">{formatPrice(point.predicted_price)}</span>
-                        <span className={(dayChange >= 0 ? 'text-green-500' : 'text-red-500')}>
-                          {dayChange >= 0 ? '+' : ''}{dayChange.toFixed(1)}%
-                        </span>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
-            <div className="mt-3 flex flex-wrap gap-2">
-              <span className="text-xs text-muted-foreground px-2 py-1 bg-secondary rounded">
-                Model: {selectedPrediction.model}
-              </span>
-              <span className="text-xs text-muted-foreground px-2 py-1 bg-secondary rounded">
-                Backtest error: {trajectory?.mape ?? '—'}%
-              </span>
-              {(trajectory as any)?.history_last && (
-                <span className="text-xs text-muted-foreground px-2 py-1 bg-secondary rounded">
-                  History until: {(trajectory as any).history_last}
-                  {(trajectory as any)?.stale_days > 2 ? ` (${(trajectory as any).stale_days}d ago)` : ''}
+            <div
+              className={cn(
+                'mt-3 rounded-sm border p-2.5 text-[12px] leading-relaxed',
+                up ? 'border-leaf/30 bg-leaf/8' : 'border-destructive/25 bg-destructive/6',
+              )}
+            >
+              <span className="font-700">{up ? 'Prices are trending up. ' : 'Prices are easing. '}</span>
+              {up
+                ? `Holding ${crop} for the next few days looks better than selling today at the current rate.`
+                : `Selling earlier is likely better — the model expects a dip over the next two weeks.`}
+              {forecast.stale_days > 0 && (
+                <span className="mt-1 block text-ink-muted">
+                  Last real mandi record is {forecast.stale_days} day
+                  {forecast.stale_days === 1 ? '' : 's'} old.
                 </span>
               )}
             </div>
-          </div>
-        )}
+          </Card>
 
-        {/* All Predictions Table */}
-        <div className="glass-card p-3">
-          <h3 className="text-sm font-bold text-foreground mb-2">All Predictions</h3>
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="text-left text-muted-foreground border-b border-border">
-                  <th className="pb-1">Commodity</th>
-                  <th className="pb-1">Market</th>
-                  <th className="pb-1 text-right">Current</th>
-                  <th className="pb-1 text-right">14-Day</th>
-                  <th className="pb-1 text-right">Change</th>
-                </tr>
-              </thead>
-              <tbody>
-                {getFilteredPredictions().map((pred, i) => (
-                  <tr key={i} className="border-b border-border/50 last:border-0 hover:bg-secondary/50">
-                    <td className="py-2 font-medium">{pred.commodity}</td>
-                    <td className="py-2">{pred.market}</td>
-                    <td className="py-2 text-right">{formatPrice(pred.current_price)}</td>
-                    <td className="py-2 text-right">{formatPrice(pred.predicted_price_14d)}</td>
-                    <td className={`py-2 text-right font-bold ${pred.predicted_change_pct >= 0 ? 'text-green-500' : 'text-red-500'}`}>
-                      {pred.predicted_change_pct >= 0 ? '+' : ''}{pred.predicted_change_pct.toFixed(1)}%
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
+          {/* chart */}
+          <Card>
+            <div className="mb-1 flex items-center justify-between">
+              <CardLabel>Price history + forecast</CardLabel>
+              <span className="text-[10.5px] text-ink-muted">{forecast.model || 'Holt-Winters'}</span>
+            </div>
+            <ForecastChart
+              history={history}
+              forecast={forecast.trajectory.map((p) => ({
+                date: p.date,
+                predicted_price: p.predicted_price,
+                ci_low: p.ci_low,
+                ci_high: p.ci_high,
+              }))}
+              today={history[history.length - 1]?.date}
+              height={230}
+            />
+            <ChartLegend />
+          </Card>
 
-        {/* Factors Influencing */}
-        <div>
-          <h3 className="text-sm font-bold text-foreground mb-3">{t('factorsInfluencing')}</h3>
-          <div className="space-y-2">
-            {[
-              { icon: CloudRain, label: 'Monsoon Impact', desc: 'Heavy rainfall in Jul-Aug affects harvest timing and transport' },
-              { icon: Truck, label: 'Supply Pressure', desc: 'Market arrivals tracked daily; high supply pushes prices down' },
-              { icon: AlertTriangle, label: 'Festival Demand', desc: 'Diwali, Christmas, Carnival create seasonal price spikes' },
-              { icon: TrendingUp, label: 'Weather Stress', desc: 'Heat waves, floods, drought risk factored into forecasts' },
-            ].map((f, i) => (
-              <div key={i} className="glass-card p-3 flex gap-3">
-                <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0">
-                  <f.icon className="w-4 h-4 text-primary" />
+          {/* best day */}
+          {best && (
+            <Card variant="gold">
+              <div className="flex items-center gap-3">
+                <span className="grid h-11 w-11 place-items-center rounded-sm bg-forest/10 text-forest">
+                  <CalendarDays className="h-5 w-5" strokeWidth={2.2} />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="text-[10.5px] font-700 uppercase tracking-[0.1em] text-forest/70">
+                    {t('bestTimeToSell')}
+                  </p>
+                  <p className="font-display text-[15px] font-800 text-forest">
+                    {new Date(best.date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })} · ₹
+                    {Math.round(best.predicted_price).toLocaleString('en-IN')}
+                  </p>
+                  <p className="text-[11.5px] text-forest/75">
+                    Best of the next 14 days (+{best.change_from_initial_pct.toFixed(1)}% vs today)
+                  </p>
                 </div>
-                <div>
-                  <p className="text-xs font-bold text-foreground">{f.label}</p>
-                  <p className="text-[10px] text-muted-foreground leading-relaxed">{f.desc}</p>
-                </div>
+                <ProgressRing
+                  value={Math.max(0, Math.min(100, 50 + best.change_from_initial_pct * 4))}
+                  size={48}
+                  stroke={5}
+                  label={<TrendingUp className="mx-auto h-3.5 w-3.5" strokeWidth={2.4} />}
+                />
               </div>
-            ))}
-          </div>
-        </div>
-      </div>
+            </Card>
+          )}
 
-      <BottomNav />
-    </div>
+          {/* day by day */}
+          <Card className="p-0">
+            <div className="flex items-center justify-between px-4 pt-3">
+              <CardLabel>Day by day</CardLabel>
+              <Badge tone="neutral">14 days</Badge>
+            </div>
+            <div className="mt-1 divide-y divide-border">
+              {forecast.trajectory.map((p) => {
+                const d = new Date(p.date);
+                return (
+                  <div key={p.date} className="flex items-center gap-3 px-4 py-2">
+                    <span className="w-16 shrink-0 text-[11.5px] font-600 text-ink-muted">
+                      {d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}
+                    </span>
+                    <span className="tnum flex-1 text-[13px] font-700">
+                      ₹{Math.round(p.predicted_price).toLocaleString('en-IN')}
+                    </span>
+                    <span className="tnum hidden text-[10.5px] text-ink-muted sm:block">
+                      ₹{Math.round(p.ci_low).toLocaleString('en-IN')}–
+                      {Math.round(p.ci_high).toLocaleString('en-IN')}
+                    </span>
+                    <span
+                      className={cn(
+                        'tnum w-14 text-right text-[11.5px] font-700',
+                        p.change_from_initial_pct >= 0 ? 'text-leaf' : 'text-destructive',
+                      )}
+                    >
+                      {p.change_from_initial_pct >= 0 ? '+' : ''}
+                      {p.change_from_initial_pct.toFixed(1)}%
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </Card>
+
+          {/* coverage */}
+          <Card>
+            <div className="mb-2 flex items-center gap-2">
+              <Database className="h-4 w-4 text-primary" strokeWidth={2} />
+              <h3 className="font-display text-[14px] font-700">{t('dataCoverage')}</h3>
+            </div>
+            <p className="mb-2.5 text-[11.5px] leading-relaxed text-ink-muted">{t('coverageExplain')}</p>
+            <div className="grid grid-cols-3 gap-2">
+              <CoverageStat label="Observations" value={coverage?.obs ?? 0} />
+              <CoverageStat label="First" value={coverage?.first ?? '—'} small />
+              <CoverageStat label="Last" value={coverage?.last ?? '—'} small />
+            </div>
+            <div className="mt-2.5 flex flex-wrap items-center gap-2">
+              <Badge tone={forecast.mape <= 10 ? 'live' : forecast.mape <= 20 ? 'cached' : 'danger'}>
+                MAPE {forecast.mape.toFixed(1)}%
+              </Badge>
+              <Badge tone="neutral">{forecast.backtest_folds || 0} backtest folds</Badge>
+              <Badge tone="neutral">scope: {forecast.scope_level || 'district'}</Badge>
+            </div>
+            <p className="mt-2 flex items-start gap-1.5 text-[10.5px] leading-relaxed text-ink-muted">
+              <Info className="mt-0.5 h-3 w-3 shrink-0" strokeWidth={2} />
+              MAPE is measured on rolling-origin backtests over this commodity's
+              own real history, not on synthetic data.
+            </p>
+          </Card>
+        </div>
+      )}
+    </AppShell>
   );
 };
+
+function CoverageStat({ label, value, small }: { label: string; value: React.ReactNode; small?: boolean }) {
+  return (
+    <div className="rounded-sm border border-border bg-surface-2/60 p-2 text-center">
+      <p className="text-[9.5px] uppercase tracking-wide text-ink-muted">{label}</p>
+      <p className={cn('tnum mt-0.5 font-display font-800', small ? 'text-[11.5px]' : 'text-[15px]')}>
+        {value}
+      </p>
+    </div>
+  );
+}
 
 export default PricePredictionPage;

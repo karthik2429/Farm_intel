@@ -1,423 +1,427 @@
-import React, { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { useLanguage } from '@/contexts/LanguageContext';
+import * as React from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import {
+  ArrowRight,
+  Droplets,
+  FlaskConical,
+  MapPin,
+  Mic,
+  RefreshCw,
+  Repeat2,
+  Sparkles,
+  Sprout,
+  Store,
+  TrendingUp,
+  Wind,
+} from 'lucide-react';
+import { AppShell } from '@/components/ui-kit/AppShell';
+import { HeroChip, HeroHeader } from '@/components/ui-kit/HeroHeader';
+import {
+  Badge,
+  Card,
+  CardLabel,
+  EmptyState,
+  PriceCardSkeleton,
+  ProgressRing,
+  Skeleton,
+  StatTile,
+} from '@/components/ui-kit/core';
+import { CropThumb, PriceCard, type PriceData } from '@/components/ui-kit/PriceCard';
 import { useAuth } from '@/contexts/AuthContext';
-import { Cloud, Sprout, TrendingUp, RotateCcw, Brain, ChevronRight, Droplets, Wind, MapPin, X } from 'lucide-react';
-import BottomNav from '@/components/BottomNav';
-import cropRice from '@/assets/crop-rice.jpg';
-import cropCotton from '@/assets/crop-cotton.jpg';
-import cropSugarcane from '@/assets/crop-sugarcane.jpg';
+import { useLanguage } from '@/contexts/LanguageContext';
+import { useProfile, defaultLocation } from '@/lib/profile';
 import { getCropRecommendations } from '@/lib/api';
-import { allStates, getDistricts } from '@/lib/indian-locations';
-import { getCropInfo, getWeather, type CropInfo } from '@/lib/marketApi';
+import { getMarketHistory, getMarketPrice, getWeather } from '@/lib/marketApi';
+import { cn } from '@/lib/utils';
 
-// "bengaluru urban" -> "Bengaluru Urban" (backend resolves names lowercase)
-const prettyName = (s?: string | null) =>
-  s ? s.replace(/\b\w/g, (c) => c.toUpperCase()) : '';
+interface Weather {
+  temperature: number;
+  humidity: number;
+  rainfall: number;
+}
 
-// Real duration/water text from /crop/info — or null when unknown, so the
-// dashboard never invents a growth period for a crop.
-const periodFromInfo = (info?: CropInfo | null) => {
-  const d = info?.duration_days;
-  if (!d || d[0] <= 0 || d[1] <= 0) {
-    if (info?.maturity_note) return info.maturity_note;
-    return info?.water_needs ? `· ${info.water_needs.toLowerCase()} water` : null;
-  }
-  const m1 = Math.round(d[0] / 30.4);
-  const m2 = Math.round(d[1] / 30.4);
-  const months = m1 === m2 ? `${m1} months` : `${m1}-${m2} months`;
-  return info?.water_needs ? `${months} • ${info.water_needs.toLowerCase()} water` : months;
-};
+const QUICK_ACTIONS = [
+  { to: '/crops', label: 'Crops', icon: Sprout, tint: 'from-[#16A34A] to-[#22C55E]' },
+  { to: '/market', label: 'Market', icon: Store, tint: 'from-[#0B3D2E] to-[#14764A]' },
+  { to: '/predict', label: 'Predict', icon: TrendingUp, tint: 'from-[#F4B942] to-[#F59E0B]' },
+  { to: '/rotation', label: 'Rotation', icon: Repeat2, tint: 'from-[#0E7490] to-[#22D3EE]' },
+  { to: '/fertilizer', label: 'Fertiliser', icon: FlaskConical, tint: 'from-[#7C3AED] to-[#A78BFA]' },
+];
 
 const HomeDashboard: React.FC = () => {
-
   const { t } = useLanguage();
   const { user } = useAuth();
   const navigate = useNavigate();
+  const { profile } = useProfile(user?.id, user?.email);
+  const loc = defaultLocation(profile);
 
-  const userName =
-    user?.user_metadata?.full_name ||
-    user?.user_metadata?.name ||
-    localStorage.getItem('profile_name') ||
-    '';
+  const [weather, setWeather] = React.useState<Weather | null>(null);
+  const [weatherFailed, setWeatherFailed] = React.useState(false);
+  const [crops, setCrops] = React.useState<{ crop: string; price: PriceData | null; spark: number[] }[]>([]);
+  const [loadingCrops, setLoadingCrops] = React.useState(true);
+  const [recs, setRecs] = React.useState<{ crop: string; confidence: number }[]>([]);
 
-  // 🔥 LOCATION: profile village → GPS auto-detect → manual picker.
-  // No hidden default: if detection fails the user chooses state/district.
-  const [locSource, setLocSource] = useState<'profile' | 'gps' | 'manual' | 'detecting' | 'none'>('detecting');
-  const [locState, setLocState] = useState('');
-  const [locDistrict, setLocDistrict] = useState('');
-  const [resolvedLoc, setResolvedLoc] = useState<{ district: string; state: string } | null>(null);
-  const [locCoords, setLocCoords] = useState<{ lat: number; lon: number } | null>(null);
-  const [showLocPicker, setShowLocPicker] = useState(false);
-  const [locVersion, setLocVersion] = useState(0); // bump to refetch
-  interface RecRow {
-    name: string; district: string; period: null;
-    score: string; img: string;
-  }
-  const [recommendations, setRecommendations] = useState<RecRow[]>([]);
-  const [loadingRecs, setLoadingRecs] = useState(true);
-  const [recsInfo, setRecsInfo] = useState<Record<string, CropInfo | null>>({});
-  const [weather, setWeather] = useState<{
-    temperature: number; humidity: number; rainfall: number; source: string;
-  } | null>(null);
+  const watchCrops = React.useMemo(
+    () => (profile?.crops?.length ? profile.crops.slice(0, 5) : ['Tomato', 'Onion', 'Cotton', 'Potato']),
+    [profile?.crops],
+  );
 
-  // Resolve initial location once: profile first, then GPS auto-detect.
-  // If both fail we don't guess a district - we ask the user to pick one.
-  useEffect(() => {
-    const pState = localStorage.getItem('profile_state');
-    const pDistrict = localStorage.getItem('profile_district');
-    if (pState && pDistrict && getDistricts(pState).includes(pDistrict)) {
-      setLocState(pState);
-      setLocDistrict(pDistrict);
-      setLocCoords(null);
-      setLocSource('profile');
-      setLocVersion(v => v + 1);
-      return;
-    }
-    let settled = false;
-    const settleNoLocation = () => {
-      if (settled) return;
-      settled = true;
-      setLocSource('none');
-      setShowLocPicker(true); // open the picker so they can choose
+  React.useEffect(() => {
+    let alive = true;
+    getWeather({ district: loc.district, state: loc.state, lat: loc.lat ?? undefined, lon: loc.lon ?? undefined })
+      .then((w) => {
+        if (!alive) return;
+        if (w) setWeather(w);
+        else setWeatherFailed(true);
+      })
+      .catch(() => alive && setWeatherFailed(true));
+    return () => {
+      alive = false;
     };
-    if (navigator.geolocation) {
-      // Some webviews hang on the permission prompt - don't block forever.
-      const gpsTimeout = setTimeout(settleNoLocation, 4000);
-      navigator.geolocation.getCurrentPosition(
-        (pos) => {
-          clearTimeout(gpsTimeout);
-          if (settled) return;
-          settled = true;
-          setLocCoords({ lat: pos.coords.latitude, lon: pos.coords.longitude });
-          setLocSource('gps');
-          setLocVersion(v => v + 1);
-        },
-        () => {
-          clearTimeout(gpsTimeout);
-          settleNoLocation();
-        },
-        { timeout: 3500 }
-      );
-    } else {
-      settleNoLocation();
-    }
-  }, []);
+  }, [loc.district, loc.state, loc.lat, loc.lon]);
 
-  // Fetch recommendations for the resolved location. The location values
-  // are intentionally read at bump time (locVersion) so a change always
-  // refetches exactly once.
-  useEffect(() => {
-    if (locVersion === 0) return;
-
-    const fetchData = async () => {
-      setLoadingRecs(true);
-      try {
-        const payload: Record<string, unknown> = { season: "kharif" };
-        if (locSource === 'gps' && locCoords) {
-          payload.lat = locCoords.lat;
-          payload.lon = locCoords.lon;
-          payload.mode = "coords";
-        } else if (locState && locDistrict) {
-          payload.state = locState;
-          payload.district = locDistrict;
-          payload.mode = "auto";
-      } else {
-        return; // no usable location yet
-      }
-
-      // Live weather (Open-Meteo): coords for GPS, district for manual/profile.
-      getWeather(
-        locSource === 'gps' && locCoords
-          ? { lat: locCoords.lat, lon: locCoords.lon }
-          : { district: prettyName(locDistrict), state: prettyName(locState) },
-      )
-        .then((w) => setWeather(w))
-        .catch(() => setWeather(null));
-
-      const data = await getCropRecommendations(payload);
-
-        if (!data || !data["Top Crops"]) {
-          return;
-        }
-
-        // The backend tells us which district/state it actually resolved
-        // (GPS → nearest known district); show that to the farmer.
-        setResolvedLoc({
-          district: prettyName(data.district),
-          state: prettyName(data.state),
-        });
-
-        const mapped = data["Top Crops"].map((c: [string, number], i: number) => {
-          const name = c[0];
-          const score = Math.round(c[1] * 100);
-          const displayName = name.charAt(0).toUpperCase() + name.slice(1);
-
-          return {
-            name: displayName,
-            district: data.district
-              ? `${prettyName(data.district)}${data.state ? `, ${prettyName(data.state)}` : ''}`
-              : (locSource === 'gps' ? 'your location' : prettyName(locDistrict)),
-            period: null, // filled from real /crop/info below
-            score: `+${score}%`,
-            img:
-              name === "rice" ? cropRice :
-              name === "sugarcane" ? cropSugarcane :
-              cropCotton
-          };
-        });
-
-        setRecommendations(mapped);
-
-        // Real agronomy for the recommended crops (duration + water needs).
-        getCropInfo(mapped.map((m) => m.name.toLowerCase()))
-          .then((res) => setRecsInfo(res?.crops || {}))
-          .catch(() => setRecsInfo({}));
-
-      } catch (err) {
-        console.error("API ERROR:", err);
-      } finally {
-        setLoadingRecs(false);
-      }
+  const loadCrops = React.useCallback(() => {
+    let alive = true;
+    setLoadingCrops(true);
+    Promise.all(
+      watchCrops.map(async (crop) => {
+        const [p, hist] = await Promise.all([
+          getMarketPrice(crop, loc.district, loc.state),
+          getMarketHistory(crop, loc.district, loc.state, 30).catch(() => null),
+        ]);
+        const spark = (hist?.points || []).slice(-14).map((h) => h.price);
+        const data: PriceData | null = p
+          ? {
+              commodity: crop,
+              district: loc.district,
+              state: loc.state,
+              market: p.market,
+              price: p.modal,
+              min_price: p.min,
+              max_price: p.max,
+              date: p.date,
+              source: p.source,
+              is_real: p.is_real,
+              badge: p.badge,
+              detail: p.detail,
+            }
+          : null;
+        return { crop, price: data, spark };
+      }),
+    ).then((res) => {
+      if (!alive) return;
+      setCrops(res);
+      setLoadingCrops(false);
+    });
+    return () => {
+      alive = false;
     };
+  }, [watchCrops, loc.district, loc.state]);
 
-    fetchData();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [locVersion]);
-  const smartActions = [
-    { icon: Sprout, label: t('cropRecs'), path: '/crop-recommendations' },
-    { icon: TrendingUp, label: t('market'), path: '/market' },
-    { icon: RotateCcw, label: t('rotation'), path: '/crop-rotation' },
-    { icon: Brain, label: t('predict'), path: '/price-prediction' },
-  ];
+  React.useEffect(() => {
+    const cleanup = loadCrops();
+    return cleanup;
+  }, [loadCrops]);
 
-  // 📍 Display helpers - GPS resolves to whatever district the backend
-  // matched; manual/profile uses the picked names directly.
-  const displayDistrict = locSource === 'gps'
-    ? (resolvedLoc?.district || 'your location')
-    : prettyName(locDistrict);
-  const displayState = locSource === 'gps'
-    ? resolvedLoc?.state
-    : prettyName(locState);
+  React.useEffect(() => {
+    let alive = true;
+    getCropRecommendations({
+      district: loc.district || undefined,
+      state: loc.state || undefined,
+      season: profile?.season_focus || 'kharif',
+    })
+      .then((res) => {
+        if (!alive || !res) return;
+        const alts = (res.alternatives || []).slice(0, 3);
+        setRecs(alts.map((a: { crop: string; confidence: number }) => ({ crop: a.crop, confidence: a.confidence })));
+      })
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, [loc.district, loc.state, profile?.season_focus]);
+
+  const bestPrice = React.useMemo(() => {
+    const priced = crops.filter((c) => c.price?.price != null);
+    if (!priced.length) return null;
+    return priced.reduce((a, b) => ((a.price!.price || 0) > (b.price!.price || 0) ? a : b));
+  }, [crops]);
+
+  const hour = new Date().getHours();
+  const greeting = hour < 12 ? 'Suprabhat' : hour < 17 ? 'Namaste' : 'Namaste';
+  const displayName = profile?.name?.split(' ')[0] || user?.email?.split('@')[0] || '';
 
   return (
-    <div className="min-h-screen bg-background pb-20">
-      {/* Header */}
-      <div className="px-5 pt-5 pb-3">
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-xs text-muted-foreground">
-              {t('namaste')}
-              {userName ? `, ${userName}` : ''}
+    <AppShell>
+      <HeroHeader>
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-[11.5px] font-600 uppercase tracking-[0.14em] text-white/65">
+              {greeting}
             </p>
-            <h1 className="text-lg font-extrabold text-foreground">
-              🌾 {t('appName')}
+            <h1 className="mt-0.5 truncate font-display text-[24px] font-800 leading-tight tracking-tight">
+              {displayName || t('welcome')}
             </h1>
-          </div>
-          <button
-            onClick={() => navigate('/profile')}
-            className="w-9 h-9 rounded-full bg-secondary flex items-center justify-center"
-          >
-            👤
-          </button>
-        </div>
-      </div>        {/* Weather: live Open-Meteo via the backend (district or GPS coords) */}
-      <div className="px-5 mb-4">
-        <div className="glass-card p-4 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <Cloud className="w-8 h-8 text-primary" />
-            <div>
-              <p className="text-2xl font-extrabold text-foreground">
-                {weather ? `${Math.round(weather.temperature)}°C` : '—'}
-              </p>
-              <p className="text-xs text-muted-foreground">
-                {weather
-                  ? `Live · ${weather.source === 'open_meteo' ? 'Open-Meteo' : 'national fallback'}`
-                  : 'Weather unavailable'}
-              </p>
+            <div className="mt-2.5 flex flex-wrap gap-1.5">
+              <HeroChip
+                icon={<MapPin className="h-3 w-3" strokeWidth={2.2} />}
+                onClick={() => navigate('/profile')}
+              >
+                {loc.label || 'Set your district'}
+              </HeroChip>
+              <HeroChip icon={<Sparkles className="h-3 w-3" strokeWidth={2.2} />}>
+                {profile?.season_focus ? profile.season_focus : 'Kharif'} season
+              </HeroChip>
             </div>
           </div>
-          <div className="flex gap-4">
-            <div className="flex items-center gap-1">
-              <Droplets className="w-3.5 h-3.5 text-primary" />
-              <span className="text-xs text-muted-foreground">
-                {weather ? `${Math.round(weather.humidity)}%` : '—'}
-              </span>
-            </div>
-            <div className="flex items-center gap-1">
-              <Wind className="w-3.5 h-3.5 text-primary" />
-              <span className="text-xs text-muted-foreground">
-                {weather ? `${weather.rainfall.toFixed(1)} mm rain` : '—'}
-              </span>
-            </div>
+
+          <div className="shrink-0 text-right">
+            {weather ? (
+              <>
+                <p className="font-display text-[38px] font-800 leading-none tnum">
+                  {Math.round(weather.temperature)}°
+                </p>
+                <p className="mt-0.5 text-[11px] text-white/70">Live now</p>
+              </>
+            ) : weatherFailed ? (
+              <p className="text-[11px] text-white/70">Weather unavailable</p>
+            ) : (
+              <Skeleton className="h-10 w-16 bg-white/20" />
+            )}
           </div>
         </div>
 
-        {/* 📍 Location chip - shows which district the cards are for */}
+        {weather && (
+          <div className="mt-3.5 flex gap-1.5">
+            <HeroChip icon={<Droplets className="h-3 w-3" strokeWidth={2.2} />}>
+              {Math.round(weather.humidity)}% humidity
+            </HeroChip>
+            <HeroChip icon={<Wind className="h-3 w-3" strokeWidth={2.2} />}>
+              {weather.rainfall.toFixed(1)} mm rain
+            </HeroChip>
+          </div>
+        )}
+      </HeroHeader>
+
+      {/* overlapping content */}
+      <div className="relative z-10 -mt-12 space-y-5">
         <button
-          onClick={() => setShowLocPicker(s => !s)}
-          className="w-full mt-2 glass-card px-3 py-2 flex items-center gap-2"
+          type="button"
+          onClick={() => navigate('/chat')}
+          className="press flex w-full items-center gap-3 rounded-md border border-border bg-surface p-3 text-left shadow-md hover:shadow-lg"
         >
-          <MapPin className="w-3.5 h-3.5 text-primary" />
-          <span className="text-xs font-bold text-foreground flex-1 text-left truncate">
-            {locSource === 'detecting' && 'Detecting your location…'}
-            {locSource === 'none' && 'Choose your state & district'}
-            {locSource !== 'detecting' && locSource !== 'none' && (
-              <>
-                {displayDistrict}{displayState ? `, ${displayState}` : ''}
-                {locSource === 'gps' && ' (auto-detected)'}
-              </>
-            )}
+          <span className="grid h-9 w-9 place-items-center rounded-full bg-primary/12 text-primary">
+            <Sparkles className="h-4 w-4" strokeWidth={2} />
           </span>
-          <span className="text-[10px] text-primary font-semibold">
-            {locSource === 'detecting' ? '…' : 'Change'}
+          <span className="min-w-0 flex-1 truncate text-[13.5px] text-ink-muted">
+            {t('askInLanguage')}
+          </span>
+          <span className="grid h-9 w-9 place-items-center rounded-full bg-gold text-forest">
+            <Mic className="h-4 w-4" strokeWidth={2.2} />
           </span>
         </button>
 
-        {showLocPicker && (
-          <div className="glass-card p-3 mt-2 space-y-2">
-            <div className="flex justify-between items-center">
-              <p className="text-xs font-bold text-muted-foreground">YOUR LOCATION</p>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => {
-                    setShowLocPicker(false);
-                    setLocSource('detecting');
-                    if (navigator.geolocation) {
-                      navigator.geolocation.getCurrentPosition(
-                        (pos) => {
-                          setLocCoords({ lat: pos.coords.latitude, lon: pos.coords.longitude });
-                          setLocState('');
-                          setLocDistrict('');
-                          setLocSource('gps');
-                          setLocVersion(v => v + 1);
-                        },
-                        () => setLocSource(locState ? 'manual' : 'none'),
-                        { timeout: 5000 }
-                      );
-                    }
-                  }}
-                  className="text-[10px] font-bold text-primary"
+        {/* quick actions */}
+        <section>
+          <div className="grid grid-cols-5 gap-2">
+            {QUICK_ACTIONS.map((a) => (
+              <Link
+                key={a.to}
+                to={a.to}
+                className="press group flex flex-col items-center gap-1.5 rounded-sm border border-border bg-surface p-2.5 text-center shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md"
+              >
+                <span
+                  className={cn(
+                    'grid h-9 w-9 place-items-center rounded-sm bg-gradient-to-br text-white shadow-sm',
+                    a.tint,
+                  )}
                 >
-                  📍 Auto Detect
-                </button>
-                <button onClick={() => setShowLocPicker(false)}>
-                  <X className="w-3.5 h-3.5 text-muted-foreground" />
-                </button>
-              </div>
+                  <a.icon className="h-[18px] w-[18px]" strokeWidth={2} />
+                </span>
+                <span className="text-[10.5px] font-600 leading-tight text-ink">{a.label}</span>
+              </Link>
+            ))}
+          </div>
+        </section>
+
+        {/* my crops */}
+        <section>
+          <div className="mb-2.5 flex items-end justify-between">
+            <h2 className="font-display text-[17px] font-700 tracking-tight">{t('myCrops')}</h2>
+            <Link to="/market" className="inline-flex items-center gap-1 text-[12px] font-600 text-primary">
+              {t('viewAll')} <ArrowRight className="h-3 w-3" strokeWidth={2.4} />
+            </Link>
+          </div>
+
+          {loadingCrops ? (
+            <div className="space-y-2">
+              <PriceCardSkeleton />
+              <PriceCardSkeleton />
             </div>
-            <select
-              value={locState}
-              onChange={(e) => {
-                const s = e.target.value;
-                setLocState(s);
-                const ds = getDistricts(s);
-                setLocDistrict(ds.length ? ds[0] : '');
-              }}
-              className="w-full bg-secondary rounded px-3 py-2 text-sm"
-            >
-              <option value="">Select State</option>
-              {allStates.map(s => <option key={s}>{s}</option>)}
-            </select>
-            <select
-              value={locDistrict}
-              onChange={(e) => setLocDistrict(e.target.value)}
-              className="w-full bg-secondary rounded px-3 py-2 text-sm"
-              disabled={!locState}
-            >
-              <option value="">Select District</option>
-              {getDistricts(locState).map(d => <option key={d}>{d}</option>)}
-            </select>
+          ) : crops.length ? (
+            <div className="space-y-2 stagger">
+              {crops.map(({ crop, price, spark }) =>
+                price ? (
+                  <PriceCard
+                    key={crop}
+                    data={price}
+                    spark={spark}
+                    onClick={() => navigate(`/predict?crop=${encodeURIComponent(crop)}`)}
+                  />
+                ) : (
+                  <Card key={crop} className="flex items-center gap-3">
+                    <CropThumb crop={crop} size={44} />
+                    <div className="min-w-0 flex-1">
+                      <p className="font-display text-[13.5px] font-700">{crop}</p>
+                      <p className="text-[11.5px] text-ink-muted">No mandi record for your district yet</p>
+                    </div>
+                    <Badge tone="unavailable">Unavailable</Badge>
+                  </Card>
+                ),
+              )}
+            </div>
+          ) : (
+            <EmptyState
+              title="No crops watched yet"
+              description="Add the crops you grow in your profile to see their mandi prices here."
+              action={
+                <button
+                  type="button"
+                  onClick={() => navigate('/profile')}
+                  className="rounded-full bg-primary px-4 py-2 text-[12.5px] font-700 text-primary-foreground"
+                >
+                  Add my crops
+                </button>
+              }
+            />
+          )}
+        </section>
+
+        {/* best time to sell */}
+        {bestPrice?.price?.price != null && (
+          <Card variant="gold" className="flex items-center gap-3">
+            <span className="grid h-11 w-11 shrink-0 place-items-center rounded-sm bg-forest/10 text-forest">
+              <TrendingUp className="h-5 w-5" strokeWidth={2.2} />
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="text-[10.5px] font-700 uppercase tracking-[0.1em] text-forest/70">
+                {t('bestTimeToSell')}
+              </p>
+              <p className="mt-0.5 font-display text-[15px] font-800 leading-tight text-forest">
+                {bestPrice.crop} · ₹{bestPrice.price!.price!.toLocaleString('en-IN')}/q
+              </p>
+              <p className="text-[11.5px] text-forest/75">
+                Highest of your crops in {loc.district || 'your district'} today
+              </p>
+            </div>
             <button
-              onClick={() => {
-                if (!locState || !locDistrict) return;
-                setLocCoords(null);
-                setLocSource('manual');
-                setShowLocPicker(false);
-                setLocVersion(v => v + 1);
-              }}
-              disabled={!locState || !locDistrict}
-              className="w-full gradient-primary py-2 rounded-lg text-sm font-bold disabled:opacity-50"
+              type="button"
+              onClick={() => navigate(`/predict?crop=${encodeURIComponent(bestPrice.crop)}`)}
+              className="press shrink-0 rounded-full bg-forest px-3 py-2 text-[11.5px] font-700 text-white"
             >
-              Use This Location
+              Forecast
+            </button>
+          </Card>
+        )}
+
+        {/* recommendations */}
+        <section>
+          <div className="mb-2.5 flex items-end justify-between">
+            <div>
+              <h2 className="font-display text-[17px] font-700 tracking-tight">
+                {t('topRecommendations')}
+              </h2>
+              <p className="text-[11.5px] text-ink-muted">{t('aiBasedSelection')}</p>
+            </div>
+            <Link to="/crops" className="text-[12px] font-600 text-primary">
+              {t('viewAll')}
+            </Link>
+          </div>
+
+          {recs.length ? (
+            <div className="grid gap-2 sm:grid-cols-3">
+              {recs.map((r) => (
+                <Card key={r.crop} interactive onClick={() => navigate(`/crop-detail?crop=${encodeURIComponent(r.crop)}`)}>
+                  <div className="flex items-center gap-3">
+                    <CropThumb crop={r.crop} size={44} />
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate font-display text-[13.5px] font-700">{r.crop}</p>
+                      <p className="text-[11px] text-ink-muted">{t('matchScore')}</p>
+                    </div>
+                    <ProgressRing value={Math.round(r.confidence * 100)} size={46} stroke={5} />
+                  </div>
+                </Card>
+              ))}
+            </div>
+          ) : (
+            <Card className="flex items-center justify-between gap-3">
+              <p className="text-[12.5px] text-ink-muted">
+                Recommendations need your district and soil — set them once and this fills in.
+              </p>
+              <button
+                type="button"
+                onClick={() => navigate('/profile')}
+                className="shrink-0 rounded-full border border-border px-3 py-1.5 text-[11.5px] font-600"
+              >
+                Set up
+              </button>
+            </Card>
+          )}
+        </section>
+
+        {/* mandi movers */}
+        <section>
+          <div className="mb-2.5 flex items-center justify-between">
+            <h2 className="font-display text-[17px] font-700 tracking-tight">{t('mandiMovers')}</h2>
+            <button
+              type="button"
+              onClick={() => loadCrops()}
+              className="press inline-flex items-center gap-1 rounded-full border border-border px-2.5 py-1 text-[11px] font-600 text-ink-muted"
+            >
+              <RefreshCw className="h-3 w-3" strokeWidth={2.2} /> Refresh
             </button>
           </div>
-        )}
-      </div>
+          <Card className="divide-y divide-border p-0">
+            {crops.slice(0, 4).map(({ crop, price, spark }) => (
+              <div key={crop} className="flex items-center gap-3 px-3 py-2.5">
+                <CropThumb crop={crop} size={32} />
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-[12.5px] font-600">{crop}</p>
+                  <p className="truncate text-[10.5px] text-ink-muted">
+                    {price?.market || 'Market unknown'}
+                  </p>
+                </div>
+                <span className="tnum text-[13px] font-700">
+                  {price?.price != null ? `₹${price.price.toLocaleString('en-IN')}` : '--'}
+                </span>
+              </div>
+            ))}
+            {!crops.length && (
+              <div className="px-3 py-6 text-center text-[12px] text-ink-muted">No prices yet</div>
+            )}
+          </Card>
+        </section>
 
-      {/* Actions */}
-      <div className="px-5 mb-4">
-        <h2 className="text-sm font-bold text-foreground mb-3">
-          {t('aiSmartActions')}
-        </h2>
-        <div className="grid grid-cols-4 gap-2">
-          {smartActions.map((a, i) => (
-            <button
-              key={i}
-              onClick={() => navigate(a.path)}
-              className="glass-card p-3 flex flex-col items-center gap-2"
-            >
-              <a.icon className="w-5 h-5 text-primary" />
-              <p className="text-[10px] font-bold text-foreground text-center">
-                {a.label}
-              </p>
-            </button>
-          ))}
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <StatTile label="Crops watched" value={crops.length} icon={<Sprout className="h-4 w-4" />} />
+          <StatTile
+            label="With live price"
+            value={crops.filter((c) => c.price?.price != null).length}
+            icon={<TrendingUp className="h-4 w-4" />}
+          />
+          <StatTile
+            label="District"
+            value={<span className="text-[15px]">{loc.district || '—'}</span>}
+            icon={<MapPin className="h-4 w-4" />}
+          />
+          <StatTile
+            label="Season"
+            value={<span className="text-[15px] capitalize">{profile?.season_focus || 'kharif'}</span>}
+            icon={<Sparkles className="h-4 w-4" />}
+          />
         </div>
       </div>
-
-      {/* Recommendations */}
-      <div className="px-5 mb-4">
-        <h2 className="text-sm font-bold text-foreground mb-3">
-          {t('topRecommendations')}
-          {displayDistrict && (
-            <span className="text-[10px] font-semibold text-muted-foreground ml-2">
-              for {displayDistrict}
-            </span>
-          )}
-        </h2>
-
-      <div className="space-y-2">
-        {loadingRecs ? (
-          <p className="text-xs text-muted-foreground">
-            Loading recommendations for {displayDistrict || 'your area'}…
-          </p>
-        ) : recommendations.length === 0 ? (
-          <p className="text-xs text-muted-foreground">
-            {locSource === 'none'
-              ? 'Choose your state & district above to see recommendations.'
-              : 'No recommendations available right now.'}
-          </p>
-        ) : (
-          recommendations.map((rec, i) => (
-            <button
-              key={i}
-              onClick={() => navigate('/crop-detail')}
-              className="w-full glass-card p-3 flex items-center gap-3"
-            >
-              <img
-                src={rec.img}
-                className="w-11 h-11 rounded-lg object-cover"
-              />
-              <div className="flex-1 text-left">
-                <p className="text-sm font-bold text-foreground">
-                  {rec.name}
-                </p>
-                <p className="text-[10px] text-muted-foreground">
-                  {periodFromInfo(recsInfo[rec.name.toLowerCase()]) || 'Duration data unavailable'}
-                </p>
-              </div>
-              <span className="text-xs font-bold text-primary">
-                {rec.score}
-              </span>
-            </button>
-          ))
-        )}
-      </div>
-    </div>
-
-      <BottomNav />
-    </div>
+    </AppShell>
   );
 };
 

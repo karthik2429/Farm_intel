@@ -1,79 +1,200 @@
+/* =============================================================================
+   AgroSmart AI — global styles
+   Tokens live in src/styles/tokens.css; this file wires them to Tailwind,
+   loads the type stack and defines the shared surface/motion utilities.
+   ========================================================================== */
+
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800&family=Noto+Sans:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+Devanagari:wght@400;500;600;700&family=Noto+Sans+Kannada:wght@400;500;600;700&family=Noto+Sans+Telugu:wght@400;500;600;700&family=Noto+Sans+Tamil:wght@400;500;600;700&family=Noto+Sans+Malayalam:wght@400;500;600;700&family=Noto+Sans+Gujarati:wght@400;500;600;700&family=Noto+Sans+Bengali:wght@400;500;600;700&family=Noto+Sans+Gurmukhi:wght@400;500;600;700&family=Noto+Sans+Oriya:wght@400;500;600;700&display=swap');
+
+@import './styles/tokens.css';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
-
-@import url('https://fonts.googleapis.com/css2?family=Nunito:wght@400;500;600;700;800&display=swap');
-
-@layer base {
-  :root {
-    --background: 150 30% 6%;
-    --foreground: 140 20% 90%;
-
-    --card: 150 25% 10%;
-    --card-foreground: 140 20% 90%;
-
-    --popover: 150 25% 10%;
-    --popover-foreground: 140 20% 90%;
-
-    --primary: 152 65% 45%;
-    --primary-foreground: 150 30% 6%;
-
-    --secondary: 150 20% 16%;
-    --secondary-foreground: 140 20% 85%;
-
-    --muted: 150 15% 14%;
-    --muted-foreground: 150 10% 55%;
-
-    --accent: 152 50% 35%;
-    --accent-foreground: 140 20% 95%;
-
-    --destructive: 0 70% 50%;
-    --destructive-foreground: 0 0% 100%;
-
-    --border: 150 15% 18%;
-    --input: 150 15% 18%;
-    --ring: 152 65% 45%;
-
-    --radius: 0.75rem;
-
-    --success: 152 65% 45%;
-    --warning: 38 92% 50%;
-    --info: 200 80% 50%;
-
-    --sidebar-background: 150 25% 8%;
-    --sidebar-foreground: 140 20% 90%;
-    --sidebar-primary: 152 65% 45%;
-    --sidebar-primary-foreground: 150 30% 6%;
-    --sidebar-accent: 150 20% 14%;
-    --sidebar-accent-foreground: 140 20% 90%;
-    --sidebar-border: 150 15% 18%;
-    --sidebar-ring: 152 65% 45%;
-  }
-}
 
 @layer base {
   * {
     @apply border-border;
   }
-  body {
-    @apply bg-background text-foreground font-sans;
-    font-family: 'Nunito', sans-serif;
+
+  html {
+    -webkit-tap-highlight-color: transparent;
+    scroll-behavior: smooth;
   }
+
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    font-feature-settings: 'cv02', 'cv03', 'cv04';
+    text-rendering: optimizeLegibility;
+    overscroll-behavior-y: none;
+  }
+
+  /* Prices, stats and anything numeric align on columns */
+  .tnum,
+  [data-numeric] {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'tnum';
+  }
+
+  /* Headings use Plus Jakarta Sans everywhere, including Indian scripts */
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-display tracking-tight;
+  }
+
+  /* Devanagari / Kannada / Telugu / Tamil / Malayalam / Gujarati / Bengali /
+     Gurmukhi / Oriya fall back to the matching Noto Script face so line
+     heights and matras never clip. */
+  :lang(hi), :lang(mr) { font-family: 'Noto Sans Devanagari', 'Noto Sans', sans-serif; }
+  :lang(kn) { font-family: 'Noto Sans Kannada', 'Noto Sans', sans-serif; }
+  :lang(te) { font-family: 'Noto Sans Telugu', 'Noto Sans', sans-serif; }
+  :lang(ta) { font-family: 'Noto Sans Tamil', 'Noto Sans', sans-serif; }
+  :lang(ml) { font-family: 'Noto Sans Malayalam', 'Noto Sans', sans-serif; }
+  :lang(gu) { font-family: 'Noto Sans Gujarati', 'Noto Sans', sans-serif; }
+  :lang(bn) { font-family: 'Noto Sans Bengali', 'Noto Sans', sans-serif; }
+  :lang(pa) { font-family: 'Noto Sans Gurmukhi', 'Noto Sans', sans-serif; }
+  :lang(or) { font-family: 'Noto Sans Oriya', 'Noto Sans', sans-serif; }
+  :lang(hi) h1, :lang(hi) h2, :lang(hi) h3,
+  :lang(kn) h1, :lang(kn) h2, :lang(kn) h3,
+  :lang(te) h1, :lang(te) h2, :lang(te) h3,
+  :lang(ta) h1, :lang(ta) h2, :lang(ta) h3,
+  :lang(ml) h1, :lang(ml) h2, :lang(ml) h3,
+  :lang(mr) h1, :lang(mr) h2, :lang(mr) h3,
+  :lang(gu) h1, :lang(gu) h2, :lang(gu) h3,
+  :lang(bn) h1, :lang(bn) h2, :lang(bn) h3,
+  :lang(pa) h1, :lang(pa) h2, :lang(pa) h3,
+  :lang(or) h1, :lang(or) h2, :lang(or) h3 {
+    font-family: inherit;
+    letter-spacing: 0;
+  }
+
+  /* Visible, on-brand focus for keyboard users only */
+  :focus-visible {
+    outline: 2px solid hsl(var(--primary));
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
+
+  ::selection {
+    background: hsl(var(--primary) / 0.22);
+  }
+
+  /* Slim scrollbars that match the surface */
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb {
+    background: hsl(var(--text-muted) / 0.28);
+    border-radius: 999px;
+    border: 3px solid transparent;
+    background-clip: content-box;
+  }
+  .no-scrollbar::-webkit-scrollbar { display: none; }
+  .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+}
+
+@layer components {
+  .surface {
+    background: hsl(var(--surface));
+    border: 1px solid hsl(var(--border));
+    border-radius: var(--r-md);
+    box-shadow: var(--shadow-sm);
+  }
+
+  .surface-glass {
+    background: hsl(var(--surface) / 0.72);
+    backdrop-filter: blur(18px) saturate(1.4);
+    -webkit-backdrop-filter: blur(18px) saturate(1.4);
+    border: 1px solid hsl(var(--border));
+  }
+
+  /* gradient hero used once per screen */
+  .hero-gradient {
+    background: var(--grad-hero);
+    position: relative;
+    isolation: isolate;
+  }
+
+  /* the faint leaf/topographic texture over heroes */
+  .hero-texture::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220' viewBox='0 0 220 220'%3E%3Cg fill='none' stroke='%23ffffff' stroke-opacity='0.16' stroke-width='1'%3E%3Cpath d='M0 110c55 0 55-55 110-55s55 55 110 55-55 55-110 55S55 165 0 110z'/%3E%3Cpath d='M0 150c55 0 55-40 110-40s55 40 110 40-55 40-110 40S55 190 0 150z'/%3E%3Cpath d='M30 40c40 10 50 40 40 70-30 10-60 0-70-30s10-50 30-40z'/%3E%3C/g%3E%3C/svg%3E");
+    background-size: 220px 220px;
+    opacity: 0.5;
+    z-index: -1;
+    pointer-events: none;
+  }
+
+  /* subtle film grain so gradients don't band */
+  .grain::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    opacity: 0.35;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n)' opacity='0.18'/%3E%3C/svg%3E");
+  }
+
+  .text-gradient {
+    background: var(--grad-leaf);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+
+  /* shimmer used by Skeleton and image placeholders */
+  .shimmer {
+    background-image: linear-gradient(
+      90deg,
+      hsl(var(--surface-2)) 0%,
+      hsl(var(--surface-2) / 0.45) 40%,
+      hsl(var(--surface-2)) 80%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 1.4s ease-in-out infinite;
+  }
+
+  .press {
+    transition: transform 160ms ease-out, box-shadow 200ms ease-out;
+  }
+  .press:active {
+    transform: scale(0.97);
+  }
+
+  .stagger > * {
+    animation: fade-up 260ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+  .stagger > *:nth-child(1) { animation-delay: 0ms; }
+  .stagger > *:nth-child(2) { animation-delay: 40ms; }
+  .stagger > *:nth-child(3) { animation-delay: 80ms; }
+  .stagger > *:nth-child(4) { animation-delay: 120ms; }
+  .stagger > *:nth-child(5) { animation-delay: 160ms; }
+  .stagger > *:nth-child(6) { animation-delay: 200ms; }
+  .stagger > *:nth-child(7) { animation-delay: 240ms; }
+  .stagger > *:nth-child(8) { animation-delay: 280ms; }
+
+  /* safe-area aware padding for phones with a notch */
+  .pb-safe { padding-bottom: max(0.75rem, env(safe-area-inset-bottom)); }
+  .pt-safe { padding-top: max(0.5rem, env(safe-area-inset-top)); }
 }
 
 @layer utilities {
-  .glass-card {
-    @apply bg-card/80 backdrop-blur-md border border-border/50 rounded-xl;
-  }
-  .gradient-primary {
-    background: linear-gradient(135deg, hsl(152 65% 45%), hsl(152 50% 35%));
-  }
-  .gradient-dark {
-    background: linear-gradient(180deg, hsl(150 30% 8%), hsl(150 30% 4%));
-  }
-  .text-gradient {
-    background: linear-gradient(135deg, hsl(152 65% 55%), hsl(152 65% 40%));
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
+  .fluid-h1 { font-size: clamp(1.45rem, 1.1rem + 1.6vw, 2rem); }
+  .fluid-h2 { font-size: clamp(1.15rem, 1rem + 0.9vw, 1.4rem); }
+  .fluid-body { font-size: clamp(0.95rem, 0.92rem + 0.2vw, 1.05rem); }
+  .price-xl { font-size: clamp(2rem, 1.5rem + 2vw, 2.5rem); line-height: 1; }
+}
+
+/* Respect the user's motion preference everywhere */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
   }
 }

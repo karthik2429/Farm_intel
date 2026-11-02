@@ -1,56 +1,84 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Route, Routes } from "react-router-dom";
-import { Toaster as Sonner } from "@/components/ui/sonner";
-import { Toaster } from "@/components/ui/toaster";
-import { TooltipProvider } from "@/components/ui/tooltip";
-import { LanguageProvider } from "@/contexts/LanguageContext";
-import { AuthProvider } from "@/contexts/AuthContext";
-import OnboardingPage from "./pages/OnboardingPage";
-import ProfileSetupPage from "./pages/ProfileSetupPage";
-import HomeDashboard from "./pages/HomeDashboard";
-import CropRecommendationsPage from "./pages/CropRecommendationsPage";
-import CropDetailPage from "./pages/CropDetailPage";
-import MarketPricesPage from "./pages/MarketPricesPage";
-import PricePredictionPage from "./pages/PricePredictionPage";
-import CropRotationPage from "./pages/CropRotationPage";
-import FertilizerRecommendationPage from "./pages/FertilizerRecommendationPage";
-import AIChatPage from "./pages/AIChatPage";
-import FarmerProfilePage from "./pages/FarmerProfilePage";
-import MarketplacePage from "./pages/MarketplacePage";
-import NotFound from "./pages/NotFound";
+import * as React from 'react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
+import { Toaster as Sonner } from '@/components/ui/sonner';
+import { Toaster } from '@/components/ui/toaster';
+import { TooltipProvider } from '@/components/ui/tooltip';
+import { LanguageProvider } from '@/contexts/LanguageContext';
+import { AuthProvider } from '@/contexts/AuthContext';
+import { ThemeProvider } from '@/components/ThemeProvider';
+import { SetupStatusPanel } from '@/components/SetupStatusPanel';
+import { Skeleton } from '@/components/ui-kit/core';
 
-const queryClient = new QueryClient();
+const LoginPage = React.lazy(() => import('./pages/LoginPage'));
+const ProfileSetupPage = React.lazy(() => import('./pages/ProfileSetupPage'));
+const HomeDashboard = React.lazy(() => import('./pages/HomeDashboard'));
+const CropRecommendationsPage = React.lazy(() => import('./pages/CropRecommendationsPage'));
+const CropDetailPage = React.lazy(() => import('./pages/CropDetailPage'));
+const MarketPricesPage = React.lazy(() => import('./pages/MarketPricesPage'));
+const PricePredictionPage = React.lazy(() => import('./pages/PricePredictionPage'));
+const CropRotationPage = React.lazy(() => import('./pages/CropRotationPage'));
+const FertilizerRecommendationPage = React.lazy(() => import('./pages/FertilizerRecommendationPage'));
+const ChatPage = React.lazy(() => import('./pages/ChatPage'));
+const FarmerProfilePage = React.lazy(() => import('./pages/FarmerProfilePage'));
+const DesignGallery = React.lazy(() => import('./pages/DesignGallery'));
+const NotFound = React.lazy(() => import('./pages/NotFound'));
+
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: { retry: 1, refetchOnWindowFocus: false, staleTime: 60_000 },
+  },
+});
+
+function RouteFallback() {
+  return (
+    <div className="mx-auto w-full max-w-content space-y-3 px-4 py-6">
+      <Skeleton className="h-8 w-40" />
+      <Skeleton className="h-32 w-full" />
+      <Skeleton className="h-20 w-full" />
+      <Skeleton className="h-20 w-full" />
+    </div>
+  );
+}
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
-    <AuthProvider>
-      <LanguageProvider>
-        <TooltipProvider>
-          <Toaster />
-          <Sonner />
-          <BrowserRouter>
-            <div className="max-w-lg mx-auto min-h-screen">
-              <Routes>
-                <Route path="/" element={<OnboardingPage />} />
-                <Route path="/setup" element={<ProfileSetupPage />} />
-                <Route path="/home" element={<HomeDashboard />} />
-                <Route path="/crop-recommendations" element={<CropRecommendationsPage />} />
-                <Route path="/crop-detail" element={<CropDetailPage />} />
-                <Route path="/market" element={<MarketPricesPage />} />
-                <Route path="/price-prediction" element={<PricePredictionPage />} />
-                <Route path="/crop-rotation" element={<CropRotationPage />} />
-                <Route path="/fertilizer" element={<FertilizerRecommendationPage />} />
-                <Route path="/crops" element={<CropRecommendationsPage />} />
-                <Route path="/ai-chat" element={<AIChatPage />} />
-                <Route path="/profile" element={<FarmerProfilePage />} />
-                <Route path="/marketplace" element={<MarketplacePage />} />
-                <Route path="*" element={<NotFound />} />
-              </Routes>
-            </div>
-          </BrowserRouter>
-        </TooltipProvider>
-      </LanguageProvider>
-    </AuthProvider>
+    <ThemeProvider>
+      <AuthProvider>
+        <LanguageProvider>
+          <TooltipProvider>
+            <Toaster />
+            <Sonner />
+            <BrowserRouter>
+              <React.Suspense fallback={<RouteFallback />}>
+                <Routes>
+                  <Route path="/" element={<LoginPage />} />
+                  <Route path="/onboarding" element={<ProfileSetupPage />} />
+                  <Route path="/setup" element={<Navigate to="/onboarding" replace />} />
+                  <Route path="/home" element={<HomeDashboard />} />
+                  <Route path="/market" element={<MarketPricesPage />} />
+                  <Route path="/predict" element={<PricePredictionPage />} />
+                  <Route path="/price-prediction" element={<Navigate to="/predict" replace />} />
+                  <Route path="/crops" element={<CropRecommendationsPage />} />
+                  <Route path="/crop-recommendations" element={<Navigate to="/crops" replace />} />
+                  <Route path="/crop-detail" element={<CropDetailPage />} />
+                  <Route path="/rotation" element={<CropRotationPage />} />
+                  <Route path="/crop-rotation" element={<Navigate to="/rotation" replace />} />
+                  <Route path="/fertilizer" element={<FertilizerRecommendationPage />} />
+                  <Route path="/chat" element={<ChatPage />} />
+                  <Route path="/ai-chat" element={<Navigate to="/chat" replace />} />
+                  <Route path="/profile" element={<FarmerProfilePage />} />
+                  <Route path="/marketplace" element={<Navigate to="/market" replace />} />
+                  <Route path="/design" element={<DesignGallery />} />
+                  <Route path="*" element={<NotFound />} />
+                </Routes>
+              </React.Suspense>
+              <SetupStatusPanel />
+            </BrowserRouter>
+          </TooltipProvider>
+        </LanguageProvider>
+      </AuthProvider>
+    </ThemeProvider>
   </QueryClientProvider>
 );
 

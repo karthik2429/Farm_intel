@@ -1,48 +1,11 @@
-import React from 'react';
+/**
+ * Legacy entry point. The app navigation now lives in ui-kit/AppShell
+ * (desktop rail + glass phone bar + raised gold chat action). Pages that
+ * still render <BottomNav /> get exactly the same chrome, without the old
+ * Marketplace and "AI App" tabs.
+ */
+import { NavChrome } from '@/components/ui-kit/AppShell';
 
-import { useNavigate, useLocation } from 'react-router-dom';
-import { Home, TrendingUp, Bot, Sprout, ShoppingCart, Leaf, TestTube, LineChart } from 'lucide-react';
-import { useLanguage } from '@/contexts/LanguageContext';
-
-const BottomNav: React.FC = () => {
-  const navigate = useNavigate();
-  const location = useLocation();
-  const { t } = useLanguage();
-
-  const tabs = [
-    { path: '/home', icon: Home, label: t('home') },
-    { path: '/market', icon: TrendingUp, label: t('marketNav') },
-    { path: '/price-prediction', icon: LineChart, label: t('predict') },
-    { path: '/crops', icon: Sprout, label: t('crops') },
-    { path: '/crop-rotation', icon: Leaf, label: 'Rotation' },
-    { path: '/fertilizer', icon: TestTube, label: 'Fertilizer' },
-    { path: '/ai-chat', icon: Bot, label: t('aiApp') },
-    { path: '/marketplace', icon: ShoppingCart, label: t('marketplace') },
-  ];
-
-  return (
-    <nav className="fixed bottom-0 left-0 right-0 z-50 glass-card border-t border-border/50 rounded-none">
-      <div className="flex items-center justify-around py-2 px-2 max-w-lg mx-auto">
-        {tabs.map((tab) => {
-          const isActive = location.pathname === tab.path;
-          return (
-            <button
-              key={tab.path}
-              onClick={() => navigate(tab.path)}
-              className={`flex flex-col items-center gap-0.5 px-3 py-1.5 rounded-xl transition-all ${
-                isActive
-                  ? 'text-primary bg-primary/10'
-                  : 'text-muted-foreground hover:text-foreground'
-              }`}
-            >
-              <tab.icon className="w-5 h-5" />
-              <span className="text-[10px] font-semibold">{tab.label}</span>
-            </button>
-          );
-        })}
-      </div>
-    </nav>
-  );
-};
+const BottomNav = () => <NavChrome />;
 
 export default BottomNav;

@@ -1,32 +1,64 @@
-import React, { createContext, useContext, useState, useCallback } from 'react';
-import { Language, t as translate, isRtl } from '@/lib/i18n';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import {
+  LANGUAGES,
+  type Language,
+  htmlLang,
+  isRtl,
+  speechLocale,
+  t as translate,
+} from '@/lib/i18n';
+import { env } from '@/lib/env';
+
+const STORAGE_KEY = 'agrosmart.language';
 
 interface LanguageContextType {
   language: Language;
   setLanguage: (lang: Language) => void;
-  t: (key: Parameters<typeof translate>[0]) => string;
+  t: (key: string) => string;
   rtl: boolean;
+  speechLocale: string;
+  languages: Language[];
 }
 
 const LanguageContext = createContext<LanguageContextType | undefined>(undefined);
 
+function initialLanguage(): Language {
+  const saved = localStorage.getItem(STORAGE_KEY) as Language | null;
+  if (saved && LANGUAGES.includes(saved)) return saved;
+  // fall back to the browser language, then the configured default
+  const nav = (navigator.language || '').split('-')[0] as Language;
+  if (LANGUAGES.includes(nav)) return nav;
+  return env.defaultLanguage;
+}
+
 export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [language, setLanguageState] = useState<Language>('en');
+  const [language, setLanguageState] = useState<Language>(initialLanguage);
 
   const setLanguage = useCallback((lang: Language) => {
     setLanguageState(lang);
-    document.documentElement.dir = isRtl(lang) ? 'rtl' : 'ltr';
+    localStorage.setItem(STORAGE_KEY, lang);
   }, []);
 
-  const t = useCallback((key: Parameters<typeof translate>[0]) => {
-    return translate(key, language);
+  useEffect(() => {
+    document.documentElement.lang = htmlLang[language];
+    document.documentElement.dir = isRtl(language) ? 'rtl' : 'ltr';
   }, [language]);
 
-  return (
-    <LanguageContext.Provider value={{ language, setLanguage, t, rtl: isRtl(language) }}>
-      {children}
-    </LanguageContext.Provider>
+  const t = useCallback((key: string) => translate(key, language), [language]);
+
+  const value = useMemo(
+    () => ({
+      language,
+      setLanguage,
+      t,
+      rtl: isRtl(language),
+      speechLocale: speechLocale[language],
+      languages: LANGUAGES,
+    }),
+    [language, setLanguage, t],
   );
+
+  return <LanguageContext.Provider value={value}>{children}</LanguageContext.Provider>;
 };
 
 export const useLanguage = () => {
