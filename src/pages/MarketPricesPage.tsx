@@ -33,7 +33,10 @@ const MarketPricesPage: React.FC = () => {
   const [commodities, setCommodities] = React.useState<string[]>([]);
   const [query, setQuery] = React.useState('');
   const [sort, setSort] = React.useState<SortKey>('name');
-  const [grid, setGrid] = React.useState(false);
+  // Desktop gets the denser grid by default; phones stay a single column.
+  const [grid, setGrid] = React.useState(
+    () => typeof window !== 'undefined' && window.innerWidth >= 1024,
+  );
   const [onlyAvailable, setOnlyAvailable] = React.useState(false);
   const [rows, setRows] = React.useState<Record<string, Row>>({});
   const [visible, setVisible] = React.useState(PAGE);

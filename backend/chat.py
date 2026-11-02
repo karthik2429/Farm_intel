@@ -74,9 +74,9 @@ def check_rate(user_id: str) -> Optional[str]:
 _cache: Dict[str, Tuple[float, dict]] = {}
 
 
-def _cache_key(question: str, lang: str, district: str) -> str:
+def _cache_key(question: str, lang: str, district: Optional[str]) -> str:
     day = time.strftime("%Y-%m-%d")
-    raw = f"{question.strip().lower()}|{lang}|{district.lower()}|{day}"
+    raw = f"{question.strip().lower()}|{lang}|{(district or '').lower()}|{day}"
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
@@ -835,7 +835,7 @@ def answer(question: str, ctx: dict, history: Optional[List[dict]] = None) -> di
     3. otherwise -> LLM with tools; honest setup message when no key
     """
     lang = (ctx.get("lang") or "en").lower()
-    key = _cache_key(question, lang, ctx.get("district", ""))
+    key = _cache_key(question, lang, ctx.get("district"))
     cached = _cache_get(key)
     if cached is not None:
         return {**cached, "cached": True}

@@ -43,7 +43,7 @@ export function SetupStatusPanel() {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="press fixed bottom-24 left-3 z-40 hidden items-center gap-1.5 rounded-full border border-border bg-surface/90 px-3 py-1.5 text-[11px] font-600 text-ink-muted shadow-md backdrop-blur md:bottom-4 md:flex"
+        className="press fixed bottom-24 left-3 z-40 hidden items-center gap-1.5 rounded-full border border-border bg-surface/90 px-3 py-1.5 text-[11px] font-600 text-ink-muted shadow-md backdrop-blur md:flex"
         title="Development setup status"
       >
         <CircleDashed className="h-3 w-3" strokeWidth={2.2} />

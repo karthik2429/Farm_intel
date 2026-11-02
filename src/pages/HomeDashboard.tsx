@@ -404,7 +404,7 @@ const HomeDashboard: React.FC = () => {
           </Card>
         </section>
 
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
           <StatTile label="Crops watched" value={crops.length} icon={<Sprout className="h-4 w-4" />} />
           <StatTile
             label="With live price"

@@ -6,7 +6,7 @@
  * tokens in src/styles/tokens.css.
  */
 import * as React from 'react';
-import { ArrowDownRight, ArrowUpRight, ChevronLeft, Minus } from 'lucide-react';
+import { ArrowDownRight, ArrowUpRight, ChevronLeft, Minus, RefreshCw } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 /* ------------------------------------------------------------------ Card -- */
@@ -426,7 +426,7 @@ export function Sparkline({
       width={width}
       height={height}
       viewBox={`0 0 ${width} ${height}`}
-      className={cn('overflow-visible', className)}
+      className={cn('block', className)}
       aria-hidden
     >
       <defs>

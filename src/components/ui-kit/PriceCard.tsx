@@ -150,7 +150,7 @@ export function PriceCard({
           </span>
         </p>
         {pct != null && (
-          <div className="mt-2 h-1 w-full overflow-hidden rounded-full bg-surface-2">
+          <div className="mt-2 h-1 w-full max-w-[280px] overflow-hidden rounded-full bg-surface-2">
             <span
               className="block h-full rounded-full"
               style={{
@@ -180,8 +180,8 @@ export function PriceCard({
         </div>
         <p className="mt-0.5 text-[10px] uppercase tracking-wide text-ink-muted">per quintal</p>
         {spark && spark.length > 1 && (
-          <div className="mt-1 flex justify-end">
-            <Sparkline points={spark} width={64} height={20} positive={up} />
+          <div className="mt-1 flex justify-end overflow-hidden">
+            <Sparkline points={spark} width={58} height={20} positive={up} />
           </div>
         )}
         <div className="mt-1.5 flex justify-end">

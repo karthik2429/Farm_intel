@@ -92,7 +92,7 @@ const DesignGallery: React.FC = () => {
 
         <section>
           <SectionHeader title="Stats & rings" />
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
             <StatTile label="Price" value={<CountUp value={8200} prefix="₹" />} deltaPct={2.4} icon={<TrendingUp className="h-4 w-4" />} />
             <StatTile label="Crops" value={12} icon={<Sprout className="h-4 w-4" />} />
             <Card className="flex items-center gap-3">
