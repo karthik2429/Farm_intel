@@ -7,6 +7,7 @@ import BottomNav from '@/components/BottomNav';
 import { getFertilizerRecommendation, getDefaultNPK } from '@/lib/api';
 import { allStates, getDistricts } from '@/lib/indian-locations';
 import { useMemo } from 'react';
+import type { FertilizerMatch, FertilizerResult, RequestPayload } from '@/lib/apiTypes';
 
 const FertilizerRecommendationPage: React.FC = () => {
   const { t } = useLanguage();
@@ -38,7 +39,7 @@ const FertilizerRecommendationPage: React.FC = () => {
   const [detectingLocation, setDetectingLocation] = useState(false);
   const [coords, setCoords] = useState<{ lat: number; lon: number } | null>(null);
   const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<any>(null);
+  const [result, setResult] = useState<FertilizerResult | null>(null);
 
   const districts = useMemo(() => getDistricts(selectedState), [selectedState]);
 
@@ -81,7 +82,7 @@ const FertilizerRecommendationPage: React.FC = () => {
 
     setLoading(true);
     try {
-      let payload: any = {
+      const payload: RequestPayload = {
         crop,
         soil: soilType,
         top_k: 5
@@ -144,7 +145,7 @@ const FertilizerRecommendationPage: React.FC = () => {
   const fetchDefaultNPK = async (mode: 'auto' | 'coords') => {
     setFetchingNPK(true);
     try {
-      let payload: any = { mode };
+      const payload: RequestPayload = { mode };
       if (mode === 'auto' || !coords) {
         payload.district = selectedDistrict;
       }
@@ -403,7 +404,7 @@ const FertilizerRecommendationPage: React.FC = () => {
                 Top Matches from Dataset
               </p>
               <div className="space-y-2 max-h-64 overflow-y-auto">
-                {result.top_matches.map((match: any, i: number) => (
+                {(result.top_matches ?? []).map((match: FertilizerMatch, i: number) => (
                   <div key={i} className="p-3 bg-secondary/50 rounded-lg">
                     <div className="flex justify-between items-start">
                       <p className="font-semibold text-sm">{match.Fertilizer}</p>

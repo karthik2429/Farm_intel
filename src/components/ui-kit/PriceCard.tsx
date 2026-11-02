@@ -141,10 +141,13 @@ export function PriceCard({
             </span>
           )}
         </div>
-        <p className="mt-0.5 flex items-center gap-1 truncate text-[11.5px] text-ink-muted">
+        <p className="mt-0.5 flex items-center gap-1 text-[11.5px] text-ink-muted">
           <MapPin className="h-3 w-3 shrink-0" strokeWidth={2} />
-          {data.market || data.district || 'Market unknown'}
-          {data.date ? <span className="opacity-70">· {shortDate(data.date)}</span> : null}
+          <span className="truncate">
+            {[data.market || data.district || 'Market unknown', data.date ? shortDate(data.date) : '']
+              .filter(Boolean)
+              .join(' · ')}
+          </span>
         </p>
         {pct != null && (
           <div className="mt-2 h-1 w-full overflow-hidden rounded-full bg-surface-2">

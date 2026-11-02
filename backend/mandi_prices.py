@@ -88,7 +88,11 @@ def resolve_commodity(name: str) -> Optional[str]:
         return None
     if key in _COMMODITY_ALIASES:
         return _COMMODITY_ALIASES[key]
+    # "Arecanut(Betelnut/Supari)" -> "arecanut" -> look the alias up again so
+    # the canonical AGMARKNET spelling (with brackets) is preserved.
     base = key.split("(")[0].strip()
+    if base in _COMMODITY_ALIASES:
+        return _COMMODITY_ALIASES[base]
     return base.title() if base else None
 
 

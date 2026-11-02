@@ -63,7 +63,13 @@ const fmtDate = (d: string) => {
   return dt.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' });
 };
 
-function TipBox({ active, payload, label }: any) {
+interface TipProps {
+  active?: boolean;
+  payload?: { payload?: Row }[];
+  label?: string;
+}
+
+function TipBox({ active, payload, label }: TipProps) {
   if (!active || !payload?.length) return null;
   const row = payload[0]?.payload as Row;
   return (
@@ -105,13 +111,13 @@ export function ForecastChart({
   className?: string;
 }) {
   const rows = React.useMemo(() => buildRows(history, forecast), [history, forecast]);
+  const gid = React.useId().replace(/:/g, '');
   if (!rows.length) return null;
 
   const prices = rows.flatMap((r) => [r.actual, r.forecast, r.bandBase].filter(Boolean) as number[]);
   const min = Math.min(...prices);
   const max = Math.max(...prices);
   const pad = Math.max((max - min) * 0.15, 20);
-  const gid = React.useId().replace(/:/g, '');
 
   return (
     <div className={cn('w-full', className)} style={{ height }}>
@@ -139,6 +145,7 @@ export function ForecastChart({
           />
           <YAxis
             domain={[min - pad, max + pad]}
+            allowDataOverflow
             tick={{ fontSize: 10, fill: 'hsl(var(--text-muted))' }}
             axisLine={false}
             tickLine={false}

@@ -406,6 +406,7 @@ export function Sparkline({
   className?: string;
   positive?: boolean;
 }) {
+  const gid = React.useId().replace(/:/g, '');
   const clean = (points || []).filter((n) => Number.isFinite(n));
   if (clean.length < 2) {
     return <div className={cn('h-7 w-24 rounded bg-surface-2/60', className)} aria-hidden />;
@@ -419,7 +420,6 @@ export function Sparkline({
   const area = `${line} L${width},${height} L0,${height} Z`;
   const rising = positive ?? clean[clean.length - 1] >= clean[0];
   const stroke = rising ? 'hsl(var(--leaf))' : 'hsl(var(--danger))';
-  const gid = React.useId().replace(/:/g, '');
 
   return (
     <svg

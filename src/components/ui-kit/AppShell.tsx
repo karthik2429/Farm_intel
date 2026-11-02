@@ -12,6 +12,7 @@ import { ChevronLeft, ChevronRight, Leaf, MessageCircle, Settings2 } from 'lucid
 import { cn } from '@/lib/utils';
 import { CHAT_ROUTE, NAV_ITEMS } from '@/lib/nav';
 import { Avatar } from './core';
+import { OfflineBanner } from '@/components/OfflineBanner';
 import { ThemeToggle } from '@/components/ThemeProvider';
 import { useLanguage } from '@/contexts/LanguageContext';
 
@@ -298,7 +299,8 @@ export function AppShell({
 
       {/* ------------------------------------------------------- content */}
       <div className={cn('transition-[padding] duration-300', collapsed ? 'md:pl-[76px]' : 'md:pl-60')}>
-        <div className="mx-auto min-h-screen w-full max-w-content px-4 pb-28 pt-3 sm:px-6 md:pb-10">
+        <div className="mx-auto min-h-screen w-full max-w-content px-4 pb-28 pt-5 sm:px-6 md:pb-10">
+          <OfflineBanner />
           {children}
         </div>
       </div>

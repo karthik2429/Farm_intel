@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 import BottomNav from '@/components/BottomNav';
 import { getRotationPlan, getDefaultNPK } from '@/lib/api';
 import { allStates, getDistricts } from '@/lib/indian-locations';
+import type { RequestPayload, RotationResult, RotationSuggestion } from '@/lib/apiTypes';
 
 const CropRotationPage: React.FC = () => {
   const { t } = useLanguage();
@@ -17,7 +18,7 @@ const CropRotationPage: React.FC = () => {
   const [potassium, setPotassium] = useState('');
   const [ph, setPh] = useState('');
   const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<any>(null);
+  const [result, setResult] = useState<RotationResult | null>(null);
 
   // Profile district saved? Start there instead of forcing GPS detection.
   const [locationMode, setLocationMode] = useState<'current' | 'custom'>(
@@ -86,7 +87,7 @@ const CropRotationPage: React.FC = () => {
 
     setLoading(true);
     try {
-      let payload: any = {
+      const payload: RequestPayload = {
         season1_crop: prevCrop,
         top_n: 3,
       };
@@ -141,7 +142,7 @@ const CropRotationPage: React.FC = () => {
         season1_crop: data.season1 || payload.season1_crop,
         depleted_soil: data.soil_after_s1 || {},
         warnings: data.warnings || [],
-        top_suggestions: (data.season2_options || []).map((s: any) => ({
+        top_suggestions: (data.season2_options || []).map((s: RotationSuggestion) => ({
           ...s,
           fertiliser_topup: {
             N: s.N_gap,
@@ -166,7 +167,7 @@ const CropRotationPage: React.FC = () => {
   const fetchDefaultNPK = async (mode: 'auto' | 'coords' = 'auto') => {
     setFetchingNPK(true);
     try {
-      let payload: any = { mode };
+      const payload: RequestPayload = { mode };
       if (mode === 'auto' || !coords) {
         payload.district = selectedDistrict;
       }
@@ -439,7 +440,7 @@ const CropRotationPage: React.FC = () => {
                 Season 2 Recommendations
               </p>
               <div className="space-y-3">
-                {result.top_suggestions.map((s: any, i: number) => (
+                {(result.top_suggestions ?? []).map((s: RotationSuggestion, i: number) => (
                   <div key={i} className="glass-card p-4 overflow-hidden">
                     <div className="flex items-start justify-between">
                       <div className="flex-1">

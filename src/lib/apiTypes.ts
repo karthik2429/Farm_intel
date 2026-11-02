@@ -1,0 +1,62 @@
+/**
+ * Loose-but-explicit shapes for the ML endpoints.
+ *
+ * These replace `any` in the legacy pages: request payloads are free-form
+ * dictionaries, response items are typed on the fields the UI actually reads
+ * (and still allowed to carry extra keys the backend adds later).
+ */
+
+export type RequestPayload = Record<string, unknown>;
+
+export interface RotationSuggestion {
+  crop?: string;
+  season?: string;
+  confidence?: number;
+  score?: number;
+  N_gap?: number;
+  P_gap?: number;
+  K_gap?: number;
+  rationale?: string;
+  fertiliser_topup?: { N?: number; P?: number; K?: number };
+  [key: string]: unknown;
+}
+
+export interface RotationResult {
+  season1_crop?: string;
+  depleted_soil?: Record<string, number>;
+  warnings?: string[];
+  top_suggestions?: RotationSuggestion[];
+  [key: string]: unknown;
+}
+
+export interface FertilizerMatch {
+  Fertilizer?: string;
+  Similarity?: number;
+  Notes?: string;
+  [key: string]: unknown;
+}
+
+export interface FertilizerResult {
+  top_matches?: FertilizerMatch[];
+  recommendation?: string;
+  [key: string]: unknown;
+}
+
+export interface CropEntry {
+  name?: string;
+  crop?: string;
+  score?: number;
+  confidence?: number;
+  display_score?: number;
+  mandiPrice?: number | null;
+  mandiMin?: number | null;
+  mandiMax?: number | null;
+  [key: string]: unknown;
+}
+
+export interface PredictResponse {
+  crop?: string;
+  confidence?: number;
+  alternatives?: { crop: string; confidence: number }[];
+  [key: string]: unknown;
+}

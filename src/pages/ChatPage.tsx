@@ -51,6 +51,22 @@ interface Action {
   auto?: boolean;
 }
 
+/** Minimal Web Speech API surface we rely on (not in TS's DOM lib). */
+interface SpeechRecognitionLike {
+  lang: string;
+  interimResults: boolean;
+  maxAlternatives: number;
+  start: () => void;
+  stop: () => void;
+  onresult: ((event: { results?: { [i: number]: { [j: number]: { transcript: string } } } }) => void) | null;
+  onend: (() => void) | null;
+  onerror: (() => void) | null;
+}
+type SpeechWindow = Window & {
+  SpeechRecognition?: new () => SpeechRecognitionLike;
+  webkitSpeechRecognition?: new () => SpeechRecognitionLike;
+};
+
 interface Message {
   id: string;
   role: 'user' | 'assistant';
@@ -90,11 +106,12 @@ const ChatPage: React.FC = () => {
   const [micSupported, setMicSupported] = React.useState(false);
   const [ttsSupported, setTtsSupported] = React.useState(false);
   const bottomRef = React.useRef<HTMLDivElement>(null);
-  const recognitionRef = React.useRef<any>(null);
+  const recognitionRef = React.useRef<SpeechRecognitionLike | null>(null);
   const fileRef = React.useRef<HTMLInputElement>(null);
 
   React.useEffect(() => {
-    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    const w = window as SpeechWindow;
+    const SR = w.SpeechRecognition || w.webkitSpeechRecognition;
     setMicSupported(Boolean(SR));
     setTtsSupported(typeof window !== 'undefined' && 'speechSynthesis' in window);
   }, []);
@@ -184,14 +201,15 @@ const ChatPage: React.FC = () => {
   };
 
   const startListening = () => {
-    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    const w = window as SpeechWindow;
+    const SR = w.SpeechRecognition || w.webkitSpeechRecognition;
     if (!SR) return;
     const rec = new SR();
     recognitionRef.current = rec;
     rec.lang = speechLocale[language];
     rec.interimResults = false;
     rec.maxAlternatives = 1;
-    rec.onresult = (e: any) => {
+    rec.onresult = (e) => {
       const said = e.results?.[0]?.[0]?.transcript;
       if (said) void send(said);
     };

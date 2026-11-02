@@ -44,7 +44,7 @@ interface Forecast {
   predicted_change_pct: number;
   mape: number;
   model?: string;
-  backtest_folds?: number;
+  backtest_folds?: number | { fold: number; cut: string; mape: number }[];
   history_first: string;
   history_last: string;
   history_obs: number;
@@ -75,6 +75,25 @@ const PricePredictionPage: React.FC = () => {
       .catch(() => setCommodities([]));
   }, []);
 
+  // With no explicit crop (and no saved profile crop), default to the
+  // commodity with the most REAL history so the first view is never a
+  // "not enough data" dead end.
+  React.useEffect(() => {
+    if (params.get('crop') || profile?.crops?.length) return;
+    let alive = true;
+    fetch(`${env.apiBaseUrl}/market/coverage?limit=15`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        const first = d?.rows?.[0]?.commodity;
+        if (alive && first) setCrop(first);
+      })
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   React.useEffect(() => {
     const fromUrl = params.get('crop');
     if (fromUrl && fromUrl !== crop) setCrop(fromUrl);
@@ -87,12 +106,8 @@ const PricePredictionPage: React.FC = () => {
     setError(null);
 
     const run = async () => {
-      const [hist, live] = await Promise.all([
-        getMarketHistory(crop, loc.district, loc.state, 90).catch(() => null),
-        getMarketPrice(crop, loc.district, loc.state).catch(() => null),
-      ]);
+      const live = await getMarketPrice(crop, loc.district, loc.state).catch(() => null);
       if (!alive) return;
-      setHistory(hist?.points || []);
 
       const res = await fetch(`${env.apiBaseUrl}/predict/14day`, {
         method: 'POST',
@@ -138,6 +153,17 @@ const PricePredictionPage: React.FC = () => {
           obs: entry.history_obs,
           markets: 0,
         });
+
+        // Plot history at the SAME scope the forecast resolved to, so the
+        // solid line and the dashed forecast line meet instead of showing two
+        // different geographic aggregates.
+        const hist = await getMarketHistory(
+          crop,
+          entry.district || loc.district,
+          90,
+          entry.state || loc.state,
+        ).catch(() => null);
+        if (alive) setHistory((hist?.points || []).slice(-45));
       }
       // live price (may be null) is only used for the "today" figure fallback
       if (live?.modal != null && entry && !entry.current_price) {
@@ -370,7 +396,12 @@ const PricePredictionPage: React.FC = () => {
               <Badge tone={forecast.mape <= 10 ? 'live' : forecast.mape <= 20 ? 'cached' : 'danger'}>
                 MAPE {forecast.mape.toFixed(1)}%
               </Badge>
-              <Badge tone="neutral">{forecast.backtest_folds || 0} backtest folds</Badge>
+              <Badge tone="neutral">
+                {Array.isArray(forecast.backtest_folds)
+                  ? forecast.backtest_folds.length
+                  : forecast.backtest_folds || 0}{' '}
+                backtest folds
+              </Badge>
               <Badge tone="neutral">scope: {forecast.scope_level || 'district'}</Badge>
             </div>
             <p className="mt-2 flex items-start gap-1.5 text-[10.5px] leading-relaxed text-ink-muted">

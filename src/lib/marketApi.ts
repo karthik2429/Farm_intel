@@ -180,12 +180,14 @@ export const getMarketHistory = (
   commodity: string,
   district?: string,
   days = 90,
+  state?: string,
 ): Promise<MarketHistory | null> => {
   const params = new URLSearchParams({
     commodity,
     days: String(days),
   });
   if (district) params.set("district", normalizeDistrict(district));
+  if (state) params.set("state", state);
   return fetchJson(`${API_BASE}/market/history?${params}`, 10000);
 };
 

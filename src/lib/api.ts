@@ -9,7 +9,23 @@ const withTimeout = (ms: number) => {
   return { signal: ctrl.signal, done: () => clearTimeout(timer) };
 };
 
-export const getCropRecommendations = async (payload: any) => {
+export interface CropQuery {
+  N?: number | null;
+  P?: number | null;
+  K?: number | null;
+  ph?: number | null;
+  rainfall?: number | null;
+  temperature?: number | null;
+  humidity?: number | null;
+  district?: string;
+  state?: string;
+  season?: string;
+  lat?: number | null;
+  lon?: number | null;
+  mode?: "auto" | "coords";
+}
+
+export const getCropRecommendations = async (payload: CropQuery) => {
   // Forward ALL location context so the backend can resolve the district
   // (real soil NPK + district cropping pattern + season) on its own.
   const t1 = withTimeout(20000);

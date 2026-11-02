@@ -7,6 +7,7 @@ import cropRice from '@/assets/crop-rice.jpg';
 import cropCotton from '@/assets/crop-cotton.jpg';
 import cropSugarcane from '@/assets/crop-sugarcane.jpg';
 import { getCropInfo, getMarketHistory, type CropInfo, type MarketHistory } from '@/lib/marketApi';
+import type { CropEntry } from '@/lib/apiTypes';
 
 const CropDetailPage: React.FC = () => {
   const { t } = useLanguage();
@@ -16,7 +17,7 @@ const CropDetailPage: React.FC = () => {
   const [selectedCrop, setSelectedCrop] = useState<string | null>(null);
 
   // ✅ NEW DATA FORMAT (FROM PREVIOUS PAGE)
-  const cropsData: any[] = location.state?.crops || [];
+  const cropsData: CropEntry[] = location.state?.crops || [];
   const district: string | undefined = location.state?.district;
 
   // Real agronomy + mandi history, fetched once for the recommended crops.
@@ -88,7 +89,7 @@ const CropDetailPage: React.FC = () => {
   };
 
   // 🔥 MAP DATA - every value either real or clearly absent
-  const crops = cropsData.map((crop: any, index: number) => {
+  const crops = cropsData.map((crop: CropEntry, index: number) => {
     const rawName = (crop.name || crop[0]) as string;
     const score = crop.matchScore
       || Math.round((crop.confidence ?? crop[1] ?? 0.8) * 100);

@@ -72,7 +72,7 @@ const MarketPricesPage: React.FC = () => {
       missing.map(async (crop) => {
         const [p, hist] = await Promise.all([
           getMarketPrice(crop, loc.district, loc.state),
-          getMarketHistory(crop, loc.district, loc.state, 30).catch(() => null),
+          getMarketHistory(crop, loc.district, 30, loc.state).catch(() => null),
         ]);
         const data: PriceData | null = p
           ? {

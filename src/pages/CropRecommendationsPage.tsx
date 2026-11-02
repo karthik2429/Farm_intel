@@ -10,6 +10,7 @@ import { getCropRecommendations } from '@/lib/api';
 // 🔥 NEW IMPORTS
 import { getMarketPrice } from '@/lib/marketApi';
 import { mapCropName } from '@/lib/cropMap';
+import type { CropEntry, RequestPayload } from '@/lib/apiTypes';
 
 const CropRecommendationsPage: React.FC = () => {
   const { t } = useLanguage();
@@ -65,7 +66,7 @@ const CropRecommendationsPage: React.FC = () => {
   };
 
   // 🔥 ADD MARKET DATA
-  const enrichMarket = async (crops: any[], district: string, state?: string) => {
+  const enrichMarket = async (crops: CropEntry[], district: string, state?: string) => {
     return await Promise.all(
       crops.map(async (crop) => {
         const cropName = crop.name || crop[0];
@@ -88,7 +89,7 @@ const CropRecommendationsPage: React.FC = () => {
   // 🚀 FINAL LOGIC
   const handleGetRecommendations = async () => {
     try {
-      let payload: any = {
+      const payload: RequestPayload = {
         season,
       };
 

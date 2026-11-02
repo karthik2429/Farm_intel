@@ -52,7 +52,7 @@ export async function get14DayPredictions(filters?: {
   market?: string;
 }): Promise<PricePrediction[]> {
   const body = {
-    district: filters?.district || 'North Goa',
+    district: filters?.district || null,
     commodity: filters?.commodity || 'Banana',
     market: filters?.market || 'All',
   };
@@ -73,7 +73,7 @@ export async function getTrajectory(filters?: {
   days?: number;
 }): Promise<TrajectoryResponse[]> {
   const body = {
-    district: filters?.district || 'North Goa',
+    district: filters?.district || null,
     commodity: filters?.commodity || 'Banana',
     market: filters?.market || 'All',
   };

@@ -20,7 +20,7 @@ export function HeroHeader({
 }) {
   return (
     <div className={cn('relative -mx-4 -mt-4 sm:-mx-6', className)}>
-      <div className="hero-gradient hero-texture grain overflow-hidden rounded-b-lg px-4 pb-9 pt-4 text-white sm:px-6">
+      <div className="hero-gradient hero-texture grain overflow-hidden rounded-b-lg px-4 pb-20 pt-4 text-white sm:px-6">
         {children}
       </div>
       {overlap && <div className="pointer-events-none absolute -bottom-12 left-0 right-0 h-12" />}

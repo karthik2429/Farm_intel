@@ -30,6 +30,7 @@ import { CropThumb, PriceCard, type PriceData } from '@/components/ui-kit/PriceC
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useProfile, defaultLocation } from '@/lib/profile';
+import { InstallPrompt } from '@/components/OfflineBanner';
 import { getCropRecommendations } from '@/lib/api';
 import { getMarketHistory, getMarketPrice, getWeather } from '@/lib/marketApi';
 import { cn } from '@/lib/utils';
@@ -87,7 +88,7 @@ const HomeDashboard: React.FC = () => {
       watchCrops.map(async (crop) => {
         const [p, hist] = await Promise.all([
           getMarketPrice(crop, loc.district, loc.state),
-          getMarketHistory(crop, loc.district, loc.state, 30).catch(() => null),
+          getMarketHistory(crop, loc.district, 30, loc.state).catch(() => null),
         ]);
         const spark = (hist?.points || []).slice(-14).map((h) => h.price);
         const data: PriceData | null = p
@@ -205,6 +206,7 @@ const HomeDashboard: React.FC = () => {
 
       {/* overlapping content */}
       <div className="relative z-10 -mt-12 space-y-5">
+        <InstallPrompt />
         <button
           type="button"
           onClick={() => navigate('/chat')}

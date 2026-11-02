@@ -18,6 +18,8 @@ import json
 from datetime import datetime
 from pathlib import Path
 
+import hashlib
+
 import joblib
 import numpy as np
 import pandas as pd
@@ -134,7 +136,10 @@ class FertilizerRequest(BaseModel):
 
 
 class PricePredictionRequest(BaseModel):
-    district: str = "North Goa"
+    # No hardcoded default district: the caller sends the farmer's saved
+    # district, and the backend falls back district -> state -> India itself.
+    district: Optional[str] = None
+    state: Optional[str] = None
     commodity: Optional[str] = None
     market: Optional[str] = "All"
     days: int = 14
@@ -599,24 +604,34 @@ class ChatRequest(BaseModel):
     state: Optional[str] = None
     lat: Optional[float] = None
     lon: Optional[float] = None
+    lang: Optional[str] = None
+    user_id: Optional[str] = None
+    name: Optional[str] = None
+    crops: Optional[List[str]] = None
+    season: Optional[str] = None
+    land_size: Optional[float] = None
+    land_unit: Optional[str] = None
+    soil: Optional[Dict[str, Any]] = None
+
+
+LANG_NAMES = {
+    "en": "English", "hi": "Hindi", "kn": "Kannada", "te": "Telugu",
+    "ta": "Tamil", "ml": "Malayalam", "mr": "Marathi", "gu": "Gujarati",
+    "bn": "Bengali", "pa": "Punjabi", "or": "Odia",
+}
 
 
 @app.post("/chat")
 async def ai_chat(request: ChatRequest, http: Request):
     """
-    Real AI assistant replies (OpenAI-compatible endpoint called server-side;
-    the browser never sees the key). Grounded with the farmer's location and
-    live weather, and capped per client per day. When OPENAI_API_KEY is not
-    configured it answers 503 with the exact setup step instead of a canned
-    response.
-    """
-    if not chat_service.configured():
-        raise HTTPException(
-            status_code=503,
-            detail=("AI assistant not configured: set OPENAI_API_KEY in the "
-                    "backend environment (Freebuff Desktop: Account > Developer "
-                    "API can write it into the project .env)."))
+    Kisan assistant.
 
+    Price, forecast, navigation and scheme questions are answered straight
+    from the mandi database — no LLM, no cost, no invention. Only free-form
+    advice reaches a free LLM (Gemini -> Groq -> OpenRouter -> Ollama).
+    Rate limited per user per hour and globally. When no LLM key is set the
+    reply explains exactly what is missing and what still works.
+    """
     turns = [
         {"role": (m.role if m.role in ("user", "assistant") else "user"),
          "content": str(m.content)[:4000]}
@@ -625,30 +640,42 @@ async def ai_chat(request: ChatRequest, http: Request):
     if not turns:
         raise HTTPException(status_code=422, detail="Empty conversation")
 
-    client_ip = (http.client.host if http.client else "unknown")
-    err = chat_service.check_rate(client_ip)
+    user_key = request.user_id or (
+        hashlib.sha256((http.client.host if http.client else "?").encode()).hexdigest()[:16]
+    )
+    err = chat_service.check_rate(user_key)
     if err:
         raise HTTPException(status_code=429, detail=err)
 
-    rlat, rlon = _resolve_coords(request.district, request.lat, request.lon,
-                                 "auto", state=request.state)
-    temp, hum, rain = _weather_or_default(rlat, rlon)
-    known = district_data.resolve_district(request.district, request.state,
-                                           rlat, rlon) or {}
-    label = ", ".join(x for x in (known.get("district"), known.get("state")) if x)
-    system = chat_service.build_system_prompt(
-        label.title(),
-        {"temperature": round(temp, 1), "humidity": round(hum, 1),
-         "rainfall": round(rain, 1)},
-    )
+    lang = (request.lang or "en").lower()
+    if lang not in LANG_NAMES:
+        lang = "en"
+
+    ctx = {
+        "lang": lang,
+        "lang_name": LANG_NAMES[lang],
+        "district": request.district,
+        "state": request.state,
+        "name": (request.name or "").split(" ")[0],
+        "crops": request.crops or [],
+        "season": request.season,
+        "land_size": request.land_size,
+        "land_unit": request.land_unit,
+        "soil": request.soil,
+    }
+
+    question = turns[-1]["content"]
     try:
-        reply = chat_service.chat(turns, system)
-    except RuntimeError as exc:  # noqa: BLE001 - surface the provider error honestly
-        raise HTTPException(status_code=502, detail=str(exc))
+        result = chat_service.answer(question, ctx, turns[:-1])
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=502,
                             detail=f"Assistant request failed: {exc}")
-    return {"reply": reply}
+
+    return {
+        **result,
+        "providers_available": chat_service.providers(),
+        "rate_limit_per_hour": settings.chat_rate_limit_per_user_per_hour,
+    }
 
 
 @app.get("/market/price")
@@ -682,6 +709,45 @@ async def market_price(commodity: str, district: Optional[str] = None,
 @app.get("/market/status")
 async def market_status():
     return mandi_prices.status()
+
+
+@app.get("/market/coverage")
+async def market_coverage(commodity: Optional[str] = None, limit: int = 40):
+    """
+    How much REAL history exists, per commodity and market: first date, last
+    date, observation count. This is what makes a forecast honest — the UI
+    shows these numbers instead of promising accuracy it does not have.
+    """
+    limit = max(1, min(int(limit), 200))
+    try:
+        with price_store._connect() as conn:
+            if commodity:
+                resolved = mandi_prices.resolve_commodity(commodity) or commodity
+                rows = conn.execute(
+                    "SELECT commodity, market, district, state, "
+                    "MIN(date) AS first_date, MAX(date) AS last_date, "
+                    "COUNT(*) AS obs FROM mandi_prices WHERE commodity = ? "
+                    "GROUP BY commodity, market, district, state "
+                    "ORDER BY obs DESC LIMIT ?", (resolved, limit),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT commodity, '' AS market, '' AS district, '' AS state, "
+                    "MIN(date) AS first_date, MAX(date) AS last_date, "
+                    "COUNT(*) AS obs FROM mandi_prices GROUP BY commodity "
+                    "ORDER BY obs DESC LIMIT ?", (limit,),
+                ).fetchall()
+    except Exception as exc:  # noqa: BLE001 - empty store must not 500
+        return {"commodity": commodity, "rows": [], "note": f"Store unavailable: {exc}"}
+
+    data = [dict(r) for r in rows]
+    return {
+        "commodity": commodity,
+        "rows": data,
+        "total_rows": sum(int(r["obs"]) for r in data),
+        "note": ("Counts are real AGMARKNET observations in the local store."
+                 if data else "The price store is empty — run the daily ingest."),
+    }
 
 
 @app.get("/market/history")
