@@ -23,26 +23,39 @@ dist-ssr
 *.sln
 *.sw?
 
-# secrets & data
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+*.egg-info/
+
+# Secrets — never committed
 .env
 .env.local
 .env.*.local
-*.db
+!.env.example
+!.env.local.example
+service-account*.json
+
+# SQLite side files (the store itself ships as a dataset, see below)
 *.db-shm
 *.db-wal
 *.sqlite
 *.sqlite3
-__pycache__/
+
+# Datasets are part of this repo so a clone runs without a backfill.
+# Git ignores by pattern, so anything intentionally shipped is re-included here.
 *.xlsx
-backend/mandi_price_history.csv
-backend/mandi_price_store.db
+*.db
+!backend/FarmIntel_crop_master_v3_FIXED.xlsx
+!FarmIntel_crop_master_v3_FIXED.xlsx
+!backend/mandi_price_store.db
+!backend/mandi_price_history.csv
 
 # local run artifacts
 .run/
 /screenshots/tmp/
 test-results/
 playwright-report/
-
-# env templates are tracked on purpose
-!.env.example
-!.env.local.example

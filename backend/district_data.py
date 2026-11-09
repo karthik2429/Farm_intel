@@ -32,9 +32,25 @@ import pandas as pd
 import joblib
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.dirname(os.path.dirname(BASE_DIR))  # "Capstone copy"
+PROJECT_ROOT = os.path.dirname(os.path.dirname(BASE_DIR))  # legacy checkout root
 
-SOIL_CSV = os.path.join(PROJECT_ROOT, "soil_with_coordinates.csv")
+
+def _first_existing(*paths: str) -> str:
+    """First path that exists, so the bundled dataset is found however the
+    repo was checked out (backend/data, repo root, or the old layout)."""
+    for p in paths:
+        if os.path.exists(p):
+            return p
+    return paths[0]
+
+
+# Bundled with the repo (backend/data). The other locations keep working for
+# checkouts that predate the move.
+SOIL_CSV = _first_existing(
+    os.path.join(BASE_DIR, "data", "soil_with_coordinates.csv"),
+    os.path.join(os.path.dirname(BASE_DIR), "soil_with_coordinates.csv"),
+    os.path.join(PROJECT_ROOT, "soil_with_coordinates.csv"),
+)
 MODELS_DIR = os.path.join(BASE_DIR, "models")
 MASTER_XLSX = os.path.join(BASE_DIR, "FarmIntel_crop_master_v3_FIXED.xlsx")
 
@@ -490,6 +506,140 @@ _STATE_FALLBACK_CROPS = {
 }
 
 
+def _season_fit(prof: Optional[dict], season: str) -> float:
+    """0..1 fit of the crop's own sowing window to the asked-for season.
+
+    "All" crops (tomato) and perennials (sugarcane) grow across seasons, so
+    they are not penalised. A genuine mismatch (wheat asked for in kharif) is
+    demoted rather than banned: a farmer may still want the number.
+    """
+    if not prof:
+        return 0.5
+    crop_season = _norm(prof.get("season") or "")
+    asked = _norm(season or "kharif")
+    if not crop_season:
+        return 0.6
+    if crop_season in ("all", "perennial", "annual", "whole year"):
+        return 0.9
+    parts = [p.strip() for p in crop_season.replace("&", "/").split("/") if p.strip()]
+    if asked in parts:
+        return 1.0
+    return 0.45
+
+
+def _climate_fit(temperature: float, rainfall: float, prof: dict) -> float:
+    """0..1 fit of the live climate to a crop's temperature/rainfall window.
+
+    Separate from `_soil_fit` (which covers NPK and pH) so the result can show
+    "this soil suits it" and "this climate suits it" as two different facts.
+    """
+    if not prof:
+        return 0.5
+    t_min, t_max = prof.get("temp_min"), prof.get("temp_max")
+    if t_min is None or t_max is None:
+        t_fit = 0.5
+    elif t_min <= temperature <= t_max:
+        t_fit = 1.0
+    else:
+        dist = min(abs(temperature - t_min), abs(temperature - t_max))
+        t_fit = max(0.0, 1.0 - dist / 12.0)
+
+    # The live figure is a current-month value; annualising keeps the
+    # comparison against an annual rainfall band meaningful.
+    season_rain = float(rainfall) * 12.0
+    r_min, r_max = prof.get("rain_min"), prof.get("rain_max")
+    if not r_min or not r_max:
+        rain_fit = 0.5
+    elif season_rain <= r_min:
+        rain_fit = max(0.2, 1.0 - (r_min - season_rain) / r_min)
+    elif season_rain >= r_max:
+        rain_fit = max(0.2, 1.0 - (season_rain - r_max) / r_max)
+    else:
+        rain_fit = 1.0
+    return float(np.clip(0.65 * t_fit + 0.35 * rain_fit, 0.0, 1.0))
+
+
+# Crops whose yield band is measured on the raw crop while AGMARKNET stores
+# the processed commodity under the same word.
+_MARGIN_PRICE_COMMODITY = {"rice": "Paddy(Common)"}
+
+
+def _crop_economics(candidates: List[Tuple[str, float]],
+                    district: Optional[str],
+                    state: Optional[str]) -> Dict[str, dict]:
+    """Real mandi price x published yield band for each candidate crop.
+
+    This is what turns a suitability ranking into a "which crop pays best"
+    ranking: gross return per hectare = yield (t/ha) x 10 x modal price
+    (Rs/quintal). It is revenue before input costs, and the API labels it that
+    way - we have no cost-of-cultivation figures, so calling it profit would
+    be a number we cannot defend.
+
+    Prices are read from the local store and the published monthly averages
+    only (`allow_live=False`): a recommendation must not wait on the live
+    AGMARKNET feed, and an outage must not change which crop is recommended.
+    """
+    if not candidates:
+        return {}
+    try:
+        import crop_info
+        import mandi_prices
+    except Exception:  # noqa: BLE001
+        return {}
+
+    names = [c for c, _p in candidates]
+    yields: Dict[str, dict] = {}
+    try:
+        yields = crop_info.get_crop_info([n.title() for n in names])
+    except Exception:  # noqa: BLE001
+        yields = {}
+
+    out: Dict[str, dict] = {}
+    for crop_name in names:
+        price = source = date_ = scope = badge = market = None
+        # The published yield bands are of the harvested raw crop: rice's
+        # 3.5-4.5 t/ha is paddy, so valuing it at the milled "Rice" rate
+        # (~₹5,000/q) doubled its return against every other crop. The rate a
+        # paddy grower is actually paid is the Paddy(Common) quote.
+        price_commodity = _MARGIN_PRICE_COMMODITY.get(crop_name, crop_name)
+        try:
+            packed = mandi_prices.get_price(price_commodity, district, state,
+                                            allow_live=False)
+        except Exception:  # noqa: BLE001
+            packed = None
+        if packed and packed.get("price"):
+            price = float(packed["price"])
+            source = packed.get("source")
+            date_ = packed.get("date")
+            scope = packed.get("scope")
+            badge = packed.get("badge")
+            market = packed.get("market")
+            src_district = packed.get("source_district") or packed.get("district")
+        else:
+            src_district = None
+
+        info = yields.get(crop_name.title()) or {}
+        band = info.get("yield_t_ha")
+        gross = None
+        if price and band and len(band) == 2 and band[1] > 0:
+            mid = (float(band[0]) + float(band[1])) / 2.0 if band[0] > 0 else float(band[1])
+            gross = round(mid * 10.0 * price, 2)
+
+        out[crop_name] = {
+            "market_price": price,
+            "price_commodity": price_commodity,
+            "market_price_source": source,
+            "market_price_date": date_,
+            "market_price_scope": scope,
+            "market_price_badge": badge,
+            "market": market,
+            "price_district": src_district,
+            "yield_t_ha": list(band) if band else None,
+            "gross_return_per_ha": gross,
+        }
+    return out
+
+
 def _score_candidates(
     N: float, P: float, K: float, ph: float,
     temperature: float, humidity: float, rainfall: float,
@@ -499,10 +649,11 @@ def _score_candidates(
     season: str,
     top_n: int,
     state_fallback: bool = False,
+    economics: Optional[Dict[str, dict]] = None,
 ) -> dict:
     """Rank candidate crops with ML probability, historical yield/area,
-    soil fit and provenance prior - shared by the district path and the
-    state-merge path."""
+    soil fit, climate fit and what the crop actually earns per hectare -
+    shared by the district path and the state-merge path."""
     master = MASTER_CROPS
     soil = loc.get("soil")
     soil_valid = bool(soil) and any(
@@ -516,6 +667,14 @@ def _score_candidates(
             ml_probs = dict(zip(ML_LE.classes_, probas))
         except Exception as e:  # noqa: BLE001
             print(f"[district_data] ML predict failed: {e}")
+
+    econ = economics or {}
+    gross_values = [e["gross_return_per_ha"] for e in econ.values()
+                    if e.get("gross_return_per_ha")]
+    max_gross = max(gross_values) if gross_values else 0.0
+    price_values = [e["market_price"] for e in econ.values()
+                    if e.get("market_price")]
+    max_price = max(price_values) if price_values else 0.0
 
     results = []
     for crop_name, prior in candidates:
@@ -532,16 +691,40 @@ def _score_candidates(
                                  prof, rainfall)
         else:
             soil_fit = 0.5
+        climate_fit = _climate_fit(temperature, rainfall, prof) if prof else 0.5
+        season_fit = _season_fit(prof, season)
+
+        e = econ.get(crop_name) or {}
+        gross = e.get("gross_return_per_ha")
+        if gross and max_gross > 0:
+            market_score = float(gross) / max_gross
+        elif e.get("market_price") and max_price > 0:
+            # No yield band for this crop, so its price alone is only a weak
+            # signal - cap it well below a crop with a measured return.
+            market_score = 0.4 * float(e["market_price"]) / max_price
+        else:
+            market_score = 0.0
+
+        # A crop that holds a sliver of the district's cropped area is not
+        # "the best crop for this soil" even when its price is high: rice in
+        # Kolar covers ~1% of the area while ragi covers ~18%, and the price
+        # term alone was enough to put rice first. Suitability still scales
+        # the score, but locality gates how far a rare crop can climb.
+        locality = 0.55 + 0.45 * min(1.0, float(area_s) / _LOCAL_AREA_SHARE) \
+            if not state_fallback else 1.0
 
         if state_fallback:
             # No district history backs these candidates, so lean on the
-            # curated prior + agronomic fit instead of letting a single
-            # strong ML class dominate.
-            final = (0.45 * p_ml + 0.25 * hist_score + 0.15 * soil_fit
-                     + 0.15 * prior)
+            # curated prior, agronomic fit and what the crop earns here
+            # instead of letting a single strong ML class dominate.
+            raw = (0.22 * p_ml + 0.15 * hist_score + 0.14 * soil_fit
+                   + 0.08 * climate_fit + 0.05 * season_fit + 0.11 * prior
+                   + 0.25 * market_score)
         else:
-            final = (0.50 * p_ml + 0.30 * hist_score + 0.12 * soil_fit
-                     + 0.08 * prior)
+            raw = (0.20 * p_ml + 0.18 * hist_score + 0.14 * area_s
+                   + 0.14 * soil_fit + 0.09 * climate_fit + 0.05 * season_fit
+                   + 0.05 * prior + 0.15 * market_score)
+        final = raw * locality
         results.append({
             "crop": CATEGORY_DISPLAY.get(crop_name, crop_name.title()),
             "raw_crop": crop_name,
@@ -549,6 +732,21 @@ def _score_candidates(
             "ml_prob": round(p_ml, 4),
             "hist_score": round(float(hist_score), 3),
             "soil_fit": round(float(soil_fit), 3),
+            "climate_fit": round(float(climate_fit), 3),
+            "season_fit": round(float(season_fit), 3),
+            "region_share": round(float(area_s), 4),
+            "locality": round(float(locality), 3),
+            "market_score": round(float(market_score), 3),
+            "market_price": e.get("market_price"),
+            "price_commodity": e.get("price_commodity"),
+            "market_price_source": e.get("market_price_source"),
+            "market_price_date": e.get("market_price_date"),
+            "market_price_scope": e.get("market_price_scope"),
+            "market_price_badge": e.get("market_price_badge"),
+            "price_market": e.get("market"),
+            "price_district": e.get("price_district"),
+            "yield_t_ha": e.get("yield_t_ha"),
+            "gross_return_per_ha": gross,
             "final_score": round(float(final), 4),
         })
 
@@ -617,13 +815,14 @@ def _score_candidates(
 
     results = results[:max(top_n, 3)]
 
-    # Confidence rescale so the top crop shows a believable % match
+    # Confidence rescale so the top crop shows a believable % match. Scaled
+    # proportionally: the old clamp put every near-tie at 97%, which read like
+    # a bug when two crops showed the identical score.
     top = float(results[0]["final_score"]) if results else 0.0
-    scale = (1.0 / top) if top > 0 else 1.0
     display_scores = []
     for r in results:
-        ds = min(0.97, max(0.35, float(r["final_score"]) * scale))
-        display_scores.append(round(ds, 4))
+        ratio = (float(r["final_score"]) / top) if top > 0 else 0.0
+        display_scores.append(round(min(0.97, 0.35 + 0.62 * ratio), 4))
 
     return {
         "resolved_district": loc.get("district"),
@@ -631,6 +830,11 @@ def _score_candidates(
         "soil_used": soil,
         "season": season,
         "top": results[0]["crop"] if results else None,
+        "economics": {
+            "prices_used": bool(gross_values),
+            "basis": ("yield band (t/ha) × latest real mandi price (₹/quintal), "
+                      "before input costs"),
+        },
         "results": [
             {**r, "display_score": ds} for r, ds in zip(results, display_scores)
         ],
@@ -709,7 +913,10 @@ def recommend_for_district(
                     N, P, K, ph, temperature, humidity, rainfall,
                     state_cands, HISTORICAL_LOOKUP.get(loc_for_score["district"], {})
                     .get(sk, {}), loc_for_score, season, top_n,
-                    state_fallback=True)
+                    state_fallback=True,
+                    economics=_crop_economics(
+                        state_cands, district or loc_for_score["district"],
+                        state or st))
                 out["note"] = ("no district soil data - ranked by "
                                 f"{st} cropping pattern + climate ML")
         if out is None:
@@ -756,7 +963,8 @@ def recommend_for_district(
 
     return _score_candidates(
         N, P, K, ph, temperature, humidity, rainfall,
-        candidates, hist, loc, season, top_n)
+        candidates, hist, loc, season, top_n,
+        economics=_crop_economics(candidates, district or d, state or loc.get("state")))
 
 
 # RF classes with dedicated district-history coverage vs commercial crops
@@ -802,6 +1010,12 @@ _STATE_CROP_AFFINITY = {
     "tripura": {"jute": 0.4, "banana": 0.5, "mango": 0.35},
     "goa": {"coconut": 0.8, "mango": 0.6, "banana": 0.5},
 }
+
+
+# Share of a district's cropped area at which a crop counts as locally
+# established. Below it the locality gate scales the score down, so a crop the
+# district barely grows cannot top the list on price alone.
+_LOCAL_AREA_SHARE = 0.15
 
 
 def _soil_fit(n, p, k, ph, prof: dict, rainfall: float) -> float:

@@ -165,7 +165,7 @@ const LoginPage: React.FC = () => {
               <Sparkles className="h-5 w-5" strokeWidth={2} />
             </span>
             <div>
-              <p className="font-display text-[17px] font-800 leading-tight">AgroSmart AI</p>
+              <p className="font-display text-[17px] font-800 leading-tight">FarmIntel</p>
               <p className="text-[11px] uppercase tracking-[0.16em] text-white/70">Kisan intelligence</p>
             </div>
           </div>
@@ -201,7 +201,7 @@ const LoginPage: React.FC = () => {
             <span className="grid h-8 w-8 place-items-center rounded-sm bg-hero text-white">
               <Sparkles className="h-4 w-4" strokeWidth={2} />
             </span>
-            <span className="font-display text-[15px] font-800">AgroSmart AI</span>
+            <span className="font-display text-[15px] font-800">FarmIntel</span>
           </div>
           <div className="ml-auto flex items-center gap-2">
             <LanguageSwitcher compact />
@@ -265,7 +265,7 @@ const LoginPage: React.FC = () => {
                   </p>
                   <button
                     type="button"
-                    onClick={() => navigate('/home')}
+                    onClick={() => navigate('/onboarding')}
                     className="mt-2 text-[11.5px] font-700 text-primary hover:underline"
                   >
                     Continue without an account →

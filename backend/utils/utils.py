@@ -1,10 +1,23 @@
 import os
+import threading
+import time
+
 import pandas as pd
 import numpy as np
 import joblib
 import json
 import requests
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
+def _first_existing(*paths):
+    """First path that exists — datasets ship beside the backend or one level
+    up depending on how the repo was checked out."""
+    for p in paths:
+        if os.path.exists(p):
+            return p
+    return paths[0]
+
 try:
     from geopy.geocoders import Nominatim
     HAVE_GEOPY = True
@@ -42,10 +55,12 @@ le = None
 district_crop_map = {}
 historical_lookup = {}
 try:
-    model_path = os.path.join(BASE_DIR, 'final_model', 'rf_model.pkl')
-    le_path = os.path.join(BASE_DIR, 'final_model', 'label_encoder.pkl')
-    district_crop_map_path = os.path.join(BASE_DIR, 'final_model', 'district_crop_map.json')
-    historical_lookup_path = os.path.join(BASE_DIR, 'final_model', 'historical_lookup.json')
+    _model_dir = _first_existing(os.path.join(BASE_DIR, 'models'),
+                                 os.path.join(BASE_DIR, 'final_model'))
+    model_path = os.path.join(_model_dir, 'rf_model.pkl')
+    le_path = os.path.join(_model_dir, 'label_encoder.pkl')
+    district_crop_map_path = os.path.join(_model_dir, 'district_crop_map.json')
+    historical_lookup_path = os.path.join(_model_dir, 'historical_lookup.json')
 
     if os.path.exists(model_path):
         model = joblib.load(model_path)
@@ -65,7 +80,10 @@ except Exception:
 
 # ------------------ CROP ROTATION DATA (optional)
 try:
-    excel_path = os.path.join(BASE_DIR, '..', 'FarmIntel_crop_master_v3_FIXED.xlsx')
+    excel_path = _first_existing(
+        os.path.join(BASE_DIR, 'FarmIntel_crop_master_v3_FIXED.xlsx'),
+        os.path.join(BASE_DIR, '..', 'FarmIntel_crop_master_v3_FIXED.xlsx'),
+    )
     crop_rotation_df = pd.read_excel(excel_path, engine='openpyxl')
 except ImportError:
     print('Openpyxl is not installed; crop rotation dataset cannot be loaded.')
@@ -76,7 +94,10 @@ except Exception as e:
 
 # ------------------ FERTILIZER DATA (optional)
 try:
-    fertilizer_df = pd.read_csv(os.path.join(BASE_DIR, '..', 'fertilizer_recommendation_dataset.csv'))
+    fertilizer_df = pd.read_csv(_first_existing(
+        os.path.join(BASE_DIR, 'fertilizer_recommendation_dataset.csv'),
+        os.path.join(BASE_DIR, '..', 'fertilizer_recommendation_dataset.csv'),
+    ))
     fertilizer_df["Crop"] = fertilizer_df["Crop"].str.lower()
     fertilizer_df["Soil"] = fertilizer_df["Soil"].str.lower()
     fertilizer_features = ["Nitrogen", "Phosphorous", "Potassium", "PH"]
@@ -229,7 +250,32 @@ def land_suitability(lat, lon, season):
 
 # ------------------ WEATHER ------------------
 
+# Current weather changes slowly; an 800 ms provider round-trip on every
+# /predict, /rotation/plan and /weather call was the single biggest latency
+# item. A short TTL keyed on ~1 km coordinates keeps the card live enough
+# while making repeat requests local.
+_WEATHER_CACHE: dict = {}
+_WEATHER_CACHE_TTL_S = 600
+_WEATHER_CACHE_LOCK = threading.Lock()
+
+
 def get_weather(lat, lon):
+    """Current weather (temperature, humidity, rainfall) for a coordinate.
+
+    Cached for 10 minutes per ~1 km grid cell. Raises on provider failure so
+    the caller keeps control of its own fallback.
+    """
+    try:
+        key = (round(float(lat), 2), round(float(lon), 2))
+    except (TypeError, ValueError):
+        key = None
+
+    now = time.time()
+    if key is not None:
+        with _WEATHER_CACHE_LOCK:
+            hit = _WEATHER_CACHE.get(key)
+            if hit and now - hit[0] < _WEATHER_CACHE_TTL_S:
+                return hit[1]
 
     url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current_weather=true&hourly=relativehumidity_2m,precipitation"
 
@@ -248,17 +294,46 @@ def get_weather(lat, lon):
     humidity = data['hourly']['relativehumidity_2m'][idx]
     rainfall = data['hourly']['precipitation'][idx]
 
-    return temp, humidity, rainfall
+    values = (temp, humidity, rainfall)
+    if key is not None:
+        with _WEATHER_CACHE_LOCK:
+            if len(_WEATHER_CACHE) > 500:
+                _WEATHER_CACHE.clear()
+            _WEATHER_CACHE[key] = (now, values)
+    return values
+
+
+_WEATHER_FC_CACHE: dict = {}
+_WEATHER_FC_TTL_S = 1800
+_WATHER_FC_LOCK = threading.Lock()
 
 
 def get_weather_forecast(lat, lon, days=14):
-    """Get 14-day weather forecast from Open-Meteo."""
+    """Get 14-day weather forecast from Open-Meteo.
+
+    Cached for 30 minutes per ~1 km grid cell: the factors card and the
+    single-price view both need it, and a daily forecast does not change
+    between two page loads. An empty result is never cached, so a transient
+    provider error cannot blank the card for half an hour.
+    """
+    try:
+        key = (round(float(lat), 2), round(float(lon), 2), int(days))
+    except (TypeError, ValueError):
+        key = None
+
+    now = time.time()
+    if key is not None:
+        with _WATHER_FC_LOCK:
+            hit = _WEATHER_FC_CACHE.get(key)
+            if hit and now - hit[0] < _WEATHER_FC_TTL_S:
+                return hit[1]
+
     url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,relative_humidity_2m_max&forecast_days={days}&timezone=Asia/Kolkata"
-    
+
     try:
         data = requests.get(url, timeout=10).json()
         daily = data.get('daily', {})
-        return [
+        out = [
             {
                 'date': daily['time'][i],
                 'temp_max': daily['temperature_2m_max'][i],
@@ -271,6 +346,13 @@ def get_weather_forecast(lat, lon, days=14):
     except Exception as e:
         print(f"Weather forecast error: {e}")
         return []
+
+    if out and key is not None:
+        with _WATHER_FC_LOCK:
+            if len(_WEATHER_FC_CACHE) > 200:
+                _WEATHER_FC_CACHE.clear()
+            _WEATHER_FC_CACHE[key] = (now, out)
+    return out
 
 # ------------------ CROP ROTATION ------------------
 

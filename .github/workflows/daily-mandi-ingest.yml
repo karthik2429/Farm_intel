@@ -45,6 +45,19 @@ jobs:
           # mirror step matters here; the local store is the read cache.
           python daily_ingest.py
 
+      - name: Derive monthly averages from today's daily rows
+        working-directory: Farm_intel/backend
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: |
+          set -euo pipefail
+          # Runs server-side (public.refresh_monthly_from_daily), so it works
+          # from a throwaway runner with no local history. A month is only
+          # written once it has 10+ observed days; AGMARKNET's published
+          # averages are never overwritten.
+          python refresh_monthly.py
+
       - name: Coverage report
         if: always()
         working-directory: Farm_intel/backend

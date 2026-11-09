@@ -1,4 +1,4 @@
-/* AgroSmart AI service worker.
+/* FarmIntel service worker.
  *
  * Strategy
  *   - App shell + built assets: cache-first, refreshed in the background.

@@ -1,6 +1,6 @@
 {
-  "name": "AgroSmart AI — Kisan intelligence",
-  "short_name": "AgroSmart",
+  "name": "FarmIntel — Kisan intelligence",
+  "short_name": "FarmIntel",
   "description": "Real mandi prices, 14-day forecasts and crop advice for Indian farmers.",
   "id": "/",
   "start_url": "/home",

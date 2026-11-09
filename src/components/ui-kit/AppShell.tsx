@@ -65,7 +65,7 @@ export function NavChrome() {
           </span>
           {!collapsed && (
             <span className="min-w-0">
-              <span className="block truncate font-display text-[15px] font-800 leading-tight">AgroSmart</span>
+              <span className="block truncate font-display text-[15px] font-800 leading-tight">FarmIntel</span>
               <span className="block text-[10px] font-600 uppercase tracking-[0.12em] text-ink-muted">Kisan AI</span>
             </span>
           )}
@@ -226,7 +226,7 @@ export function AppShell({
           {!collapsed && (
             <span className="min-w-0">
               <span className="block truncate font-display text-[15px] font-800 leading-tight">
-                AgroSmart
+                FarmIntel
               </span>
               <span className="block text-[10px] font-600 uppercase tracking-[0.12em] text-ink-muted">
                 Kisan AI

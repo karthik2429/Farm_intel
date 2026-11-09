@@ -1,4 +1,4 @@
-# AgroSmart AI — delivery report
+# FarmIntel — delivery report
 
 Verification date: **2 November 2026**.
 Stack unchanged: React 18 + TypeScript + Vite + Tailwind (frontend in `Farm_intel/`),

@@ -61,6 +61,22 @@ export interface MandiPrice {
   badge?: string;
   /** human-readable detail when no price is available */
   detail?: string;
+  /**
+   * District the backend actually resolved the row from. The backend widens
+   * the search district -> state -> India, so this can differ from the
+   * requested district and the UI must say so instead of implying otherwise.
+   */
+  resolvedDistrict?: string | null;
+  resolvedState?: string | null;
+  /**
+   * How wide the backend had to search: "district" | "state" | "india" |
+   * "msp". A scoped request never widens past its own state.
+   */
+  scope?: string | null;
+  /** Days since the quote was published (0 = today). A mandi does not trade
+   *  every crop daily, so an older quote is still the latest real rate. */
+  daysOld?: number | null;
+  isToday?: boolean;
 }
 
 // ---------------- tiny response cache (dedupes parallel calls) ------------
@@ -73,18 +89,34 @@ const cacheSet = (key: string, val: MandiPrice | null) => {
     cacheTimer = setTimeout(() => {
       cache.clear();
       cacheTimer = null;
-    }, 120_000); // 2-minute cache window
+    }, 60_000); // one trading day's quotes; keep the window short
+  }
+};
+
+/** Drop every memoised quote so the next read asks the backend again
+ *  (the Market page's Refresh button, and switching market scope). */
+export const clearMarketCache = () => {
+  cache.clear();
+  inflight.clear();
+  if (cacheTimer) {
+    clearTimeout(cacheTimer);
+    cacheTimer = null;
   }
 };
 
 const _getMarketPrice = async (
   crop: string,
   cleanDistrict: string,
-  state?: string
+  state?: string,
+  strict = false,
 ): Promise<MandiPrice | null> => {
   const params = new URLSearchParams({ commodity: crop });
   if (cleanDistrict) params.set("district", cleanDistrict);
   if (state) params.set("state", state);
+  // strict = this district only. The Market page lists one district's crops
+  // and mandis, so a rate borrowed from a neighbouring district would be a
+  // different market's price shown under this district's name.
+  if (strict) params.set("strict", "1");
   const backend = await fetchJson(`${BACKEND_PRICE_URL}?${params}`, 8000);
   if (backend?.price) {
     return {
@@ -97,6 +129,11 @@ const _getMarketPrice = async (
       is_real: backend.is_real !== false,
       badge: backend.badge,
       detail: backend.detail,
+      resolvedDistrict: backend.district ?? null,
+      resolvedState: backend.state ?? null,
+      scope: backend.scope ?? null,
+      daysOld: backend.days_old ?? null,
+      isToday: backend.is_today ?? null,
     };
   }
   if (backend && backend.source === "unavailable") {
@@ -111,6 +148,9 @@ const _getMarketPrice = async (
       is_real: false,
       badge: "unavailable",
       detail: backend.detail,
+      resolvedDistrict: backend.district ?? null,
+      resolvedState: backend.state ?? null,
+      scope: backend.scope ?? null,
     };
   }
   return null;
@@ -119,18 +159,21 @@ const _getMarketPrice = async (
 export const getMarketPrice = async (
   crop: string,
   district: string,
-  state?: string
+  state?: string,
+  opts?: { strict?: boolean; fresh?: boolean },
 ): Promise<MandiPrice | null> => {
   const cleanDistrict = normalizeDistrict(district);
+  const strict = Boolean(opts?.strict && cleanDistrict);
 
-  const key = `${crop}|${cleanDistrict}|${state || ""}`;
+  const key = `${crop}|${cleanDistrict}|${state || ""}|${strict ? "d" : "w"}`;
+  if (opts?.fresh) cache.delete(key);
   if (cache.has(key)) return cache.get(key)!;
 
   // Coalesce identical parallel calls (crop lists fetch the same combos)
   const existing = inflight.get(key);
   if (existing) return existing;
 
-  const p = _getMarketPrice(crop, cleanDistrict, state)
+  const p = _getMarketPrice(crop, cleanDistrict, state, strict)
     .then((result) => {
       cacheSet(key, result);
       return result;

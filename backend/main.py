@@ -23,6 +23,7 @@ import hashlib
 import joblib
 import numpy as np
 import pandas as pd
+import requests
 
 BASE_DIR = Path(__file__).parent
 sys.path.insert(0, str(BASE_DIR))
@@ -43,6 +44,7 @@ import price_forecast  # noqa: E402
 import crop_info  # noqa: E402
 import price_store  # noqa: E402
 import chat as chat_service  # noqa: E402
+import price_factors  # noqa: E402
 from config import settings, service_status  # noqa: E402
 
 app = FastAPI(title="FarmIntel API", version="3.0.0")
@@ -157,6 +159,45 @@ _DISTRICT_COORDS = {
 }
 
 
+_GEOCODE_CACHE: dict = {}
+
+
+def _geocode_open_meteo(district: str, state: Optional[str] = None):
+    """
+    District -> (lat, lon) via Open-Meteo's geocoder.
+
+    The weather provider is already Open-Meteo, so this keeps coordinates and
+    forecast on one source and needs no API key. Cached; never raises.
+    """
+    key = f"{(district or '').strip().lower()}|{(state or '').strip().lower()}"
+    if key in _GEOCODE_CACHE:
+        return _GEOCODE_CACHE[key]
+    coords = None
+    try:
+        resp = requests.get(
+            "https://geocoding-api.open-meteo.com/v1/search",
+            params={"name": district, "count": 10, "language": "en",
+                    "format": "json", "countryCode": "IN"},
+            timeout=6,
+        )
+        results = (resp.json() or {}).get("results") or []
+        state_key = (state or "").strip().lower()
+        picked = None
+        for hit in results:
+            if hit.get("latitude") is None or hit.get("longitude") is None:
+                continue
+            admin = f"{hit.get('admin1') or ''} {hit.get('admin2') or ''}".lower()
+            if not state_key or state_key in admin:
+                picked = hit
+                break
+        if picked:
+            coords = (float(picked["latitude"]), float(picked["longitude"]))
+    except Exception:  # noqa: BLE001
+        coords = None
+    _GEOCODE_CACHE[key] = coords
+    return coords
+
+
 def _resolve_coords(district: Optional[str], lat: Optional[float],
                     lon: Optional[float], mode: str = "auto",
                     state: Optional[str] = None):
@@ -172,28 +213,41 @@ def _resolve_coords(district: Optional[str], lat: Optional[float],
         geo = district_data.geocode_district(district, state)
         if geo:
             return geo
+        geo = _geocode_open_meteo(district, state)
+        if geo:
+            return geo
         la, lo = get_lat_lon_from_district(district)
         if la is not None and lo is not None:
             return la, lo
     return lat, lon
 
 
-def _weather_or_default(lat: Optional[float], lon: Optional[float]):
-    """Live Open-Meteo weather with a monsoon-aware India fallback."""
+def _weather_lookup(lat: Optional[float], lon: Optional[float]):
+    """Live Open-Meteo weather with a monsoon-aware India fallback.
+
+    Returns (temperature, humidity, rainfall, source). The source is reported
+    for every answer: a provider outage must never be presented as a live
+    reading, because the UI labels the card from this value.
+    """
     try:
         if lat is not None and lon is not None:
             temp, humidity, rainfall = get_weather(lat, lon)
-            return float(temp), float(humidity), float(rainfall)
+            return (float(temp), float(humidity), float(rainfall), "open_meteo")
     except Exception:  # noqa: BLE001
         pass
     m = pd.Timestamp.now().month
     if m in (6, 7, 8, 9):
-        return 27.0, 85.0, 12.0
+        return 27.0, 85.0, 12.0, "national_fallback"
     if m in (10, 11):
-        return 28.0, 75.0, 3.0
+        return 28.0, 75.0, 3.0, "national_fallback"
     if m in (12, 1, 2):
-        return 24.0, 60.0, 0.5
-    return 31.0, 55.0, 1.0
+        return 24.0, 60.0, 0.5, "national_fallback"
+    return 31.0, 55.0, 1.0, "national_fallback"
+
+
+def _weather_or_default(lat: Optional[float], lon: Optional[float]):
+    temp, humidity, rainfall, _source = _weather_lookup(lat, lon)
+    return temp, humidity, rainfall
 
 
 def _fill_npk_from_location(payload: FertilizerRequest):
@@ -250,8 +304,9 @@ async def predict_crop(request: CropRecommendRequest):
     District-aware crop recommendation.
 
     Blends the RandomForest ML model with the district's real soil survey
-    (DES 2024-25), its historical cropping pattern and season. Falls back to
-    pure ML when the district is unknown.
+    (DES 2024-25), its historical cropping pattern, season, live climate and
+    the crop's real mandi price x published yield (gross return per hectare).
+    Falls back to pure ML when the district is unknown.
 
     Returns {crop, confidence, alternatives, Top Crops, district, season,
     soil_used} for CropRecommendationsPage and HomeDashboard.
@@ -304,12 +359,23 @@ async def predict_crop(request: CropRecommendRequest):
             season=request.season or "kharif",
             top_n=5,
         )
-        result["soil_used"] = result.get("soil_used") or {
+        # Report the soil values actually scored, not the district survey
+        # defaults: a caller that sent N=120 must not be told N=46.
+        result["soil_used"] = {
             "N": round(float(N), 1), "P": round(float(P), 1),
             "K": round(float(K), 1), "ph": round(float(ph), 1)}
         result["weather"] = {"temperature": round(temp, 1),
                              "humidity": round(hum, 1),
                              "rainfall": round(rain, 1)}
+        # The district survey behind the soil score, so the result can show
+        # which soil it actually matched against instead of a bare percentage.
+        result["soil_survey"] = (
+            {"source": "DES district soil test data 2024-25",
+             "district": (prof or {}).get("district"),
+             "state": (prof or {}).get("state"),
+             "N": round(float(soil["N"]), 1), "P": round(float(soil["P"]), 1),
+             "K": round(float(soil["K"]), 1), "ph": round(float(soil["ph"]), 1)}
+            if soil_valid else None)
     except HTTPException:
         raise
     except Exception as e:  # noqa: BLE001
@@ -320,8 +386,22 @@ async def predict_crop(request: CropRecommendRequest):
         raise HTTPException(status_code=503, detail="No recommendation available")
 
     ranked = [(r["crop"], float(r["display_score"])) for r in results]
-    alternatives = [{"crop": c, "confidence": round(s, 4)}
-                    for c, s in ranked[:4]]
+    # Each alternative carries the evidence behind its rank: soil fit, climate
+    # fit, how much of the district's area it already holds, and what it earns
+    # per hectare at the real mandi price. The crop page renders them instead
+    # of asking the farmer to trust one number.
+    factor_keys = (
+        "ml_prob", "soil_fit", "climate_fit", "season_fit", "hist_score",
+        "region_share", "locality", "market_score", "market_price",
+        "price_commodity", "market_price_source", "market_price_date",
+        "market_price_scope", "market_price_badge", "price_market",
+        "price_district", "yield_t_ha", "gross_return_per_ha",
+    )
+    alternatives = [
+        {"crop": r["crop"], "confidence": round(float(r["display_score"]), 4),
+         **{k: r[k] for k in factor_keys if k in r}}
+        for r in results[:4]
+    ]
     return {
         "crop": ranked[0][0],
         "confidence": round(ranked[0][1], 4),
@@ -331,7 +411,9 @@ async def predict_crop(request: CropRecommendRequest):
         "state": result.get("resolved_state"),
         "season": result.get("season"),
         "soil_used": result.get("soil_used"),
+        "soil_survey": result.get("soil_survey"),
         "weather": result.get("weather"),
+        "economics": result.get("economics"),
         "note": result.get("note"),
     }
 
@@ -680,7 +762,7 @@ async def ai_chat(request: ChatRequest, http: Request):
 
 @app.get("/market/price")
 async def market_price(commodity: str, district: Optional[str] = None,
-                       state: Optional[str] = None):
+                       state: Optional[str] = None, strict: bool = False):
     """
     Best-effort mandi price: Goa local history, bundled district snapshot,
     live AGMARKNET (self-healing probe), then MSP reference.
@@ -689,26 +771,47 @@ async def market_price(commodity: str, district: Optional[str] = None,
     `price: null` + `source: "unavailable"` so the frontend can render
     "--" without console 404 noise.
     """
-    result = mandi_prices.get_price(commodity, district, state)
+    # get_price refreshes the district's whole live feed first when strict, so
+    # a district page shows today's trade for every crop it reports instead of
+    # a mix of today's live rows and a week-old cache.
+    result = mandi_prices.get_price(commodity, district, state,
+                                    strict_district=strict)
     if not result:
+        where = ", ".join(p for p in (district, state) if p)
         return {
             "commodity": commodity,
             "district": district,
+            "state": state,
             "market": "",
             "price": None,
             "min_price": None,
             "max_price": None,
             "unit": "₹/quintal",
             "source": "unavailable",
-            "detail": (f"No mandi price available for {commodity}"
-                       + (f" in {district}" if district else "") + " right now"),
+            # Same keys as a successful payload: the UI reads is_real/badge
+            # unconditionally when drawing the honesty chip.
+            "is_real": False,
+            "badge": "unavailable",
+            "scope": "district" if district else ("state" if state else "india"),
+            "detail": (f"No AGMARKNET rate for {commodity}"
+                       + (f" in {where}" if where else "") +
+                       " right now — prices here need a real mandi report, "
+                       "so nothing is guessed"),
         }
     return result
 
 
 @app.get("/market/status")
 async def market_status():
-    return mandi_prices.status()
+    out = mandi_prices.status()
+    # Backfill state for the AGMARKNET "district-wise wholesale prices monthly
+    # analysis" report: how many states/crops/months are already stored.
+    try:
+        out["monthly"] = {"coverage": price_store.monthly_coverage(),
+                          "top": price_store.monthly_state_summary(limit=12)}
+    except Exception as exc:  # noqa: BLE001 - status must never 500
+        out["monthly"] = {"error": str(exc)}
+    return out
 
 
 @app.get("/market/coverage")
@@ -755,11 +858,12 @@ async def market_history(commodity: str, district: Optional[str] = None,
                          state: Optional[str] = None, days: int = 90):
     """
     Real daily mandi price series (mean modal price across markets in scope)
-    from the local price store, with the same commodity resolution and
-    scope drill-down as the forecast (district → state → India). Used to
-    draw the crop-page price trend. When the store has nothing for the
-    scope, `points` is empty and the frontend shows an honest message
-    instead of a fabricated chart.
+    from the local price store, with the same commodity resolution as the
+    forecast and a scope drill-down limited to district → its state. Only an
+    unscoped (All-India) request may use the national series. Used to draw the
+    crop-page price trend; when the store has nothing for the scope, `points`
+    is empty and the frontend shows an honest message instead of a fabricated
+    chart.
     """
     days = max(7, min(int(days), 365))
     resolved = mandi_prices.resolve_commodity(commodity) or commodity
@@ -775,26 +879,60 @@ async def market_history(commodity: str, district: Optional[str] = None,
         g = g.tail(days)
         return [{"date": r["date"].strftime("%Y-%m-%d"),"price": float(r["modal_price"])}
                 for _, r in g.iterrows()]
+    def _monthly_series(d, s):
+        """Published AGMARKNET monthly averages — the 2-year history the
+        forecast falls back to when no daily feed covers this scope."""
+        df = price_store.monthly_history(resolved, district=d, state=s)
+        if df is None or df.empty:
+            return None
+        return [{"date": r["date"].strftime("%Y-%m-%d"),
+                 "price": round(float(r["price"]), 1)}
+                for _, r in df.iterrows()]
+
     points = _series(district, state)
-    scope = "district"
+    scope, basis = ("district" if district else "state"), "daily"
     if not points and not state and district:
         state = price_store.state_for_district(district)  # resolve state from the district
         if state:
             points, scope = _series(None, state), "state"
     if not points and district and state:
         points, scope = _series(None, state), "state"
+    # The chart must share the forecast's basis or the two lines never meet.
+    # Use the forecast's own rule (60 daily observations over two years); a
+    # "< 8 points in this window" test disagreed with it whenever a deep series
+    # happened to have a recent gap.
+    def _daily_days(d, s) -> int:
+        df = price_store.history(resolved, district=d, state=s)
+        return 0 if df is None or df.empty else int(df["date"].nunique())
+
+    if points is not None and _daily_days(district, state) < price_forecast.MIN_OBS:
+        monthly = _monthly_series(district, state) or (
+            _monthly_series(None, state) if state else None)
+        if monthly:
+            points, basis = monthly, "monthly"
     if not points:
+        points = _monthly_series(district, state)
+        if points:
+            basis = "monthly"
+    if not points and state:
+        points, scope, basis = _monthly_series(None, state), "state", "monthly"
+    if not points and not district and not state:
+        # Only an All-India request may use the national series: a Jharkhand
+        # page must not draw a Tamil Nadu trend and call it local.
         points, scope = _series(None, None), "india"
+        if not points:
+            points, basis = _monthly_series(None, None), "monthly"
     if not points:
         return {"commodity": resolved, "district": district, "days": days,
-                "points": [], "scope": scope,
+                "points": [], "scope": scope, "basis": "none",
                 "note": "No real mandi history for this scope yet — "
-                        "accruing via daily ingestion."}
+                        "accruing via daily ingestion and the monthly backfill."}
     return {
         "commodity": resolved,
         "district": district,
         "days": days,
         "scope": scope,
+        "basis": basis,
         "points": points,
     }
 
@@ -808,7 +946,7 @@ async def weather(district: Optional[str] = None, state: Optional[str] = None,
     names, matching /predict location resolution.
     """
     rlat, rlon = _resolve_coords(district, lat, lon, "auto", state=state)
-    temp, humidity, rainfall = _weather_or_default(rlat, rlon)
+    temp, humidity, rainfall, source = _weather_lookup(rlat, rlon)
     known = district_data.resolve_district(district, state, rlat, rlon)
     return {
         "district": (known or {}).get("district") or district,
@@ -816,8 +954,7 @@ async def weather(district: Optional[str] = None, state: Optional[str] = None,
         "temperature": round(float(temp), 1),
         "humidity": round(float(humidity), 1),
         "rainfall": round(float(rainfall), 1),
-        "source": "open_meteo" if (rlat is not None and rlon is not None)
-                  else "national_fallback",
+        "source": source,
     }
 
 
@@ -835,20 +972,31 @@ async def crop_information(crops: str):
 
 # ─────────────────────── Price prediction ────────────────────────────────
 
-REAL_MODEL_LABEL = "holtwinters-mandi-v1"
+REAL_MODEL_LABEL = "mandi-forecast-v2"
 
 
 def _forecast_entries(district: Optional[str], commodity: Optional[str],
-                      market: Optional[str], days: int = 14) -> List[dict]:
-    """Run the real Holt-Winters mandi forecast and shape it to the
-    frontend contracts in priceApi.ts. Adds change_from_prev_pct so the
-    daily table shows step-by-step movement."""
+                      market: Optional[str], days: int = 14,
+                      state: Optional[str] = None,
+                      lat: Optional[float] = None,
+                      lon: Optional[float] = None) -> List[dict]:
+    """Run the mandi forecast and shape it to the frontend contracts in
+    priceApi.ts. Adds change_from_prev_pct so the daily table shows
+    step-by-step movement.
+
+    District coordinates are resolved so the live weather/disaster signals can
+    reach the model; without them the forecast still runs, without triggers.
+    """
     day = datetime.now().strftime("%Y-%m-%d")
+    rlat, rlon = _resolve_coords(district, lat, lon, "auto", state=state)
     entries = price_forecast.forecast(
         district=district,
         commodity=commodity,
         market=market or "All",
         days=days,
+        state=state,
+        lat=rlat,
+        lon=rlon,
     )
     for e in entries:
         e.setdefault("district", district or "")
@@ -865,15 +1013,22 @@ def _forecast_entries(district: Optional[str], commodity: Optional[str],
 
 
 def _forecast_or_404(district: Optional[str], commodity: Optional[str],
-                     market: Optional[str], days: int = 14) -> List[dict]:
-    entries = _forecast_entries(district, commodity, market, days)
+                     market: Optional[str], days: int = 14,
+                     state: Optional[str] = None) -> List[dict]:
+    entries = _forecast_entries(district, commodity, market, days, state=state)
     if not entries:
+        where = ", ".join(p for p in (district, state) if p)
         raise HTTPException(
             status_code=404,
-            detail=(f"Not enough real mandi history yet to forecast "
+            detail=(f"Not enough real mandi history to forecast "
                     f"{commodity or 'this commodity'}"
-                    + (f" in {district}" if district else "") +
-                    ". Daily ingestion keeps accruing history — try again later."))
+                    + (f" in {where}" if where else "") +
+                    " — a forecast here needs at least 60 daily mandi quotes or "
+                    "12 published monthly averages, and the store has fewer for "
+                    "this crop. Its current mandi price is still on the Market "
+                    "page; the forecast appears once enough days are on record. "
+                    "Data operator: run agmarknet_monthly.py to backfill the "
+                    "published monthly averages for this crop."))
     return entries
 
 
@@ -886,21 +1041,23 @@ def _price_guard():  # kept for /commodities + /markets backcompat
 @app.post("/predict/14day")
 async def predict_14day(request: PricePredictionRequest):
     return _forecast_or_404(request.district, price_forecast.resolve_name(request.commodity),
-                            request.market)
+                            request.market, state=request.state)
 
 
 @app.post("/predict/trajectory")
 async def predict_trajectory(request: PricePredictionRequest):
     return _forecast_or_404(request.district, price_forecast.resolve_name(request.commodity),
-                            request.market, days=request.days)
+                            request.market, days=request.days, state=request.state)
 
 
 @app.get("/predict/single")
 async def single_prediction(district: str, commodity: str,
-                            market: Optional[str] = "All"):
+                            market: Optional[str] = "All",
+                            state: Optional[str] = None):
     """Current market read derived from real data: latest observed price,
     forecast band and an honest confidence from backtest MAPE."""
-    entry = _forecast_entries(district, price_forecast.resolve_name(commodity), market)
+    entry = _forecast_entries(
+        district, price_forecast.resolve_name(commodity), market, state=state)
     if not entry:
         raise HTTPException(
             status_code=404, detail=f"No mandi data for {commodity} in {district}")
@@ -911,36 +1068,115 @@ async def single_prediction(district: str, commodity: str,
     band_pct = (e["ci_high_14d"] - e["ci_low_14d"]) / max(e["predicted_price_14d"], 1) * 100
     supply = ("stable" if band_pct < 12
               else "watchful" if band_pct < 25 else "volatile")
+
+    # Context factors (season, weather, flood risk, festivals, supply breadth)
+    # computed from real inputs. The ones that can be calibrated on stored
+    # prices (festivals, post-shock drift) already reached the forecast and are
+    # reported back in `events`; the rest explain it without moving it.
+    rlat, rlon = _resolve_coords(district, None, None, "auto", state=state)
+    ctx = price_factors.build_factors(
+        price_forecast.resolve_name(commodity), district,
+        e.get("state"), rlat, rlon, e.get("predicted_change_pct"),
+        season_index=e.get("season"))
+
     return {
         **{k: e.get(k) for k in ("district", "commodity", "market",
                                   "current_price", "predicted_price_14d",
                                   "predicted_change_pct")},
         "prediction_date": datetime.now().strftime("%Y-%m-%d"),
         "model": REAL_MODEL_LABEL,
+        "model_used": e.get("model"),
+        "model_label": e.get("model_label"),
+        "model_scores": e.get("model_scores"),
+        "events": e.get("events"),
+        "data_quality": e.get("data_quality"),
         "confidence": confidence,
         "mape": mape,
         "history_last": e.get("history_last"),
         "stale_days": e.get("stale_days", 0),
         "signal": e.get("signal"),
+        "history_basis": e.get("history_basis"),
+        "season": e.get("season"),
+        "festivals": e.get("festivals"),
+        "shocks": e.get("shocks"),
         "factors": {
+            # legacy flat keys kept for older clients
             "season": month,
             "supply_pressure": supply,
-            "weather_impact": "not modelled in this phase",
-            "festival_nearby": False,
+            "weather_impact": (
+                "heavy rain risk" if ctx.get("weather", {}) and ctx["weather"]["flood_risk"]
+                else "no flood signal" if ctx.get("weather") else "no coordinates"
+            ),
+            "festival_nearby": bool(ctx.get("festivals")),
+            # full factor analysis
+            "context": ctx,
         },
     }
 
 
+@app.get("/predict/factors")
+async def prediction_factors(commodity: str, district: Optional[str] = None,
+                             state: Optional[str] = None,
+                             lat: Optional[float] = None,
+                             lon: Optional[float] = None):
+    """Context factors around a forecast: seasonality, supply breadth, live
+    weather (flood/heat risk) and the festival calendar. Each signal carries
+    its own evidence; unavailable inputs are reported, never guessed."""
+    name = price_forecast.resolve_name(commodity)
+    rlat, rlon = _resolve_coords(district, lat, lon, "auto", state=state)
+    change = None
+    season = None
+    entry = _forecast_entries(district, name, "All", state=state) if (district or state) else []
+    if entry:
+        change = entry[0].get("predicted_change_pct")
+        season = entry[0].get("season")
+    return price_factors.build_factors(name, district, state, rlat, rlon, change,
+                                       season_index=season)
+
+
 @app.get("/commodities")
-async def get_commodities():
+async def get_commodities(district: Optional[str] = None,
+                         state: Optional[str] = None,
+                         predictable: bool = False,
+                         strict: bool = False,
+                         refresh: bool = False):
+    """Commodity catalogue.
+
+    Unscoped returns everything the store has ever seen. Scoped — the Market
+    page — returns only what that district or state actually reported, so a
+    farmer is never shown crops their mandi has never traded. `predictable=1`
+    further keeps only crops with enough history to forecast. `refresh=1`
+    re-asks the live feed instead of answering from the short-lived snapshot.
+    """
+    if district or state:
+        return mandi_prices.scope_commodities(district, state, predictable,
+                                              strict_district=strict,
+                                              refresh=refresh)
     comms = price_forecast.known_commodities()
     fallback = price_engine.known_commodities() if price_engine.model_loaded() else []
     merged = sorted(set([c for c in comms if c] + [c for c in fallback if c]))
-    return {"commodities": merged}
+    return {"commodities": merged, "scope": "all"}
 
 
 @app.get("/markets")
-async def get_markets(district: Optional[str] = None):
+async def get_markets(district: Optional[str] = None,
+                      state: Optional[str] = None,
+                      refresh: bool = False):
+    """Mandis in a district (or everywhere).
+
+    `refresh=1` asks the live AGMARKNET feed for the district first: the store
+    only knows mandis that have been ingested, which is why a district with a
+    dozen active mandis showed three. The live rows are persisted, so a later
+    call without network still lists them.
+    """
+    if district:
+        # The snapshot is TTL-cached (90 s), so asking for it on every call
+        # keeps the list current without re-hitting the feed per card.
+        # `refresh=1` is the page's Refresh button: bypass that cache.
+        names = mandi_prices.district_markets(district, state, refresh=refresh)
+        if names:
+            return {"markets": [{"district": district, "market": m}
+                                for m in names]}
     markets = price_forecast.known_markets()
     out = []
     for m in markets:

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# FarmIntel / AgroSmart AI — one-command dev stack
+# FarmIntel / FarmIntel — one-command dev stack
 #
 #   ./start.sh            start backend + frontend, print the URLs
 #   ./start.sh stop       stop both (only processes this script started)
@@ -15,16 +15,28 @@
 # =============================================================================
 set -uo pipefail
 
-# Works from either location: the repo root or inside Farm_intel/.
+# Works from either layout: a plain clone (this folder is the repo root) or a
+# larger checkout where Farm_intel/ sits one level down.
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 if [ -f "$SCRIPT_DIR/package.json" ]; then
+  FRONTEND_DIR="$SCRIPT_DIR"
   ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 else
   ROOT="$SCRIPT_DIR"
+  FRONTEND_DIR="$ROOT/Farm_intel"
 fi
-FRONTEND_DIR="$ROOT/Farm_intel"
 BACKEND_DIR="$FRONTEND_DIR/backend"
-VENV_PY="${VENV_PY:-$ROOT/collab/venv/bin/python}"
+
+# Python for the API: $VENV_PY, else the shared/legacy venv, else a local one,
+# else the system interpreter.
+if [ -z "${VENV_PY:-}" ]; then
+  for cand in "$ROOT/collab/venv/bin/python" \
+              "$FRONTEND_DIR/.venv/bin/python" \
+              "$FRONTEND_DIR/backend/.venv/bin/python"; do
+    if [ -x "$cand" ]; then VENV_PY="$cand"; break; fi
+  done
+  [ -z "${VENV_PY:-}" ] && VENV_PY="python3"
+fi
 RUN_DIR="$ROOT/.run"
 BACKEND_LOG="/tmp/farmintel_backend.log"
 FRONTEND_LOG="/tmp/farmintel_frontend.log"

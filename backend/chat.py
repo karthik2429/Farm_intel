@@ -173,26 +173,102 @@ def _openai_style_chat(
     return msg.get("content") or "", msg.get("tool_calls") or [], provider
 
 
+def _gemini_parse(data: Dict[str, Any]) -> Tuple[str, List[dict]]:
+    """Visible text and any function calls from a generateContent reply.
+
+    Gemini 3 returns its reasoning as parts flagged `thought`; those must never
+    be shown to a farmer, so they are filtered out of the answer.
+    """
+    cand = (data.get("candidates") or [{}])[0]
+    parts = (cand.get("content") or {}).get("parts") or []
+    text = "".join(p.get("text", "") for p in parts if not p.get("thought"))
+    calls = []
+    for p in parts:
+        fn = p.get("functionCall")
+        if fn:
+            calls.append({"function": {"name": fn.get("name"),
+                                       "arguments": json.dumps(fn.get("args") or {})}})
+    return text, calls
+
+
+# A model that answered 429/503 is skipped for a while instead of being retried
+# on every message: the free quota is per model and resets on its own.
+_model_cooldown: Dict[str, float] = {}
+_COOLDOWN_QUOTA_S = 600
+_COOLDOWN_BUSY_S = 120
+
+
+def _model_on_cooldown(model: str) -> bool:
+    until = _model_cooldown.get(model, 0.0)
+    if until and time.time() >= until:
+        _model_cooldown.pop(model, None)
+        return False
+    return until > 0
+
+
 def _gemini_chat(
     messages: List[dict],
     tools: Optional[List[dict]] = None,
+    model: Optional[str] = None,
 ) -> Tuple[str, List[dict], str]:
-    """Gemini generateContent with optional function declarations."""
+    """Gemini generateContent with optional function declarations.
+
+    Two Gemini-specific behaviours are handled here rather than left to the
+    caller:
+
+    * Tool results must be folded back into the conversation as plain text.
+      The OpenAI-style `role: tool` message has no generateContent equivalent in
+      our request shape, so passing it through silently loses the data the tool
+      just fetched — which reads to the farmer as the assistant ignoring them.
+    * `thinkingLevel: low` keeps the reply inside the token budget. Gemini 3
+      bills reasoning tokens against maxOutputTokens; at the default level a
+      short answer could be truncated, and eager tool selection could come back
+      as MALFORMED_FUNCTION_CALL with no text at all.
+    """
+    chosen = model or settings.gemini_model
     url = (
         "https://generativelanguage.googleapis.com/v1beta/models/"
-        f"{settings.gemini_model}:generateContent"
+        f"{chosen}:generateContent"
     )
     system = next((m["content"] for m in messages if m["role"] == "system"), "")
-    contents = [
-        {"role": "user" if m["role"] == "user" else "model", "parts": [{"text": m["content"]}]}
-        for m in messages
-        if m["role"] in ("user", "assistant", "model")
-    ]
+
+    tool_notes: List[str] = []
+    contents: List[dict] = []
+    for m in messages:
+        role = m.get("role")
+        if role == "tool":
+            tool_notes.append(f"{m.get('name') or 'tool'} -> {str(m.get('content') or '')[:1500]}")
+            continue
+        if role not in ("user", "assistant", "model"):
+            continue
+        body_text = str(m.get("content") or "").strip()
+        if not body_text:
+            continue
+        contents.append({"role": "user" if role == "user" else "model",
+                         "parts": [{"text": body_text}]})
+    if tool_notes:
+        note = ("Tool results (these are real; use them and do not repeat them "
+                "verbatim):\n" + "\n".join(tool_notes))
+        if contents and contents[-1]["role"] == "user":
+            contents[-1]["parts"].append({"text": note})
+        else:
+            contents.append({"role": "user",
+                             "parts": [{"text": note + "\nAnswer the question above."}]})
+
+    def _post(payload: Dict[str, Any]) -> Dict[str, Any]:
+        res = requests.post(url, params={"key": settings.gemini_api_key},
+                            json=payload, timeout=TIMEOUT_S)
+        if res.status_code != 200:
+            raise RuntimeError(
+                f"gemini[{chosen}] HTTP {res.status_code}: {res.text[:200]}")
+        return res.json()
+
     body: Dict[str, Any] = {
         "contents": contents,
         "generationConfig": {
             "temperature": 0.3,
-            "maxOutputTokens": settings.chat_max_output_tokens,
+            "maxOutputTokens": max(settings.chat_max_output_tokens, 900),
+            "thinkingConfig": {"thinkingLevel": "low"},
         },
     }
     if system:
@@ -200,23 +276,19 @@ def _gemini_chat(
     if tools:
         body["tools"] = [{"functionDeclarations": [_gemini_decl(t) for t in tools]}]
 
-    res = requests.post(
-        url,
-        params={"key": settings.gemini_api_key},
-        json=body,
-        timeout=TIMEOUT_S,
-    )
-    if res.status_code != 200:
-        raise RuntimeError(f"gemini HTTP {res.status_code}: {res.text[:200]}")
-    data = res.json()
-    cand = (data.get("candidates") or [{}])[0]
-    parts = (cand.get("content") or {}).get("parts") or []
-    text = "".join(p.get("text", "") for p in parts)
-    calls = []
-    for p in parts:
-        fn = p.get("functionCall")
-        if fn:
-            calls.append({"function": {"name": fn.get("name"), "arguments": json.dumps(fn.get("args") or {})}})
+    text, calls = _gemini_parse(_post(body))
+    if text or calls:
+        return text, calls, "gemini"
+
+    # Empty reply (usually MALFORMED_FUNCTION_CALL from an over-eager tool
+    # choice): ask again for plain prose with no tools in scope.
+    retry = {
+        **body,
+        "systemInstruction": {"parts": [{"text": system +
+                                " Answer directly in plain text now. Do not call any tool."}]},
+    }
+    retry.pop("tools", None)
+    text, calls = _gemini_parse(_post(retry))
     return text, calls, "gemini"
 
 
@@ -228,13 +300,43 @@ def _gemini_decl(tool: dict) -> dict:
     return {"name": fn.get("name"), "description": fn.get("description"), "parameters": params}
 
 
+def _gemini(messages: List[dict],
+            tools: Optional[List[dict]] = None) -> Tuple[str, List[dict], str]:
+    """Gemini with a model chain: an exhausted model falls through to the next.
+
+    Quota (429) and high-demand (503) errors are per model, so trying the next
+    model keeps general questions answered instead of returning "temporarily
+    unavailable". A model that failed is skipped for a few minutes.
+    """
+    models = settings.gemini_models
+    usable = [m for m in models if not _model_on_cooldown(m)] or models
+    last: Optional[Exception] = None
+    for model in usable:
+        try:
+            return _gemini_chat(messages, tools, model=model)
+        except Exception as exc:  # noqa: BLE001 - try the next model
+            text = str(exc)
+            busy = "HTTP 503" in text or "HTTP 500" in text
+            dead = "HTTP 404" in text
+            quota = "HTTP 429" in text
+            if quota:
+                _model_cooldown[model] = time.time() + _COOLDOWN_QUOTA_S
+            elif busy:
+                _model_cooldown[model] = time.time() + _COOLDOWN_BUSY_S
+            elif dead:
+                _model_cooldown[model] = time.time() + 24 * 3600
+            logger.warning("gemini model %s failed: %s", model, exc)
+            last = exc
+    raise RuntimeError(str(last) if last else "No Gemini model configured")
+
+
 def call_llm(messages: List[dict], tools: Optional[List[dict]] = None) -> Tuple[str, List[dict], str]:
     """Try each configured provider in order. Raises RuntimeError if all fail."""
     last: Optional[Exception] = None
     for provider in providers():
         try:
             if provider == "gemini":
-                return _gemini_chat(messages, tools)
+                return _gemini(messages, tools)
             return _openai_style_chat(provider, messages, tools)
         except Exception as exc:  # noqa: BLE001 - fall through to the next provider
             logger.warning("provider %s failed: %s", provider, exc)
@@ -270,6 +372,17 @@ TOOL_SCHEMAS: List[dict] = [
                 "type": "object",
                 "properties": {"commodity": {"type": "string"}, "market": {"type": "string"}},
                 "required": ["commodity"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_weather",
+            "description": "Real 7-day weather forecast for the farmer's district: temperature, rain and humidity.",
+            "parameters": {
+                "type": "object",
+                "properties": {"district": {"type": "string"}},
             },
         },
     },
@@ -411,6 +524,36 @@ def run_tool(name: str, args: dict, ctx: dict) -> dict:
             "available": True,
         }
 
+    if name == "get_weather":
+        from utils.utils import get_lat_lon_from_district, get_weather_forecast
+
+        if not district:
+            return {"available": False, "reason": "no district in the profile"}
+        try:
+            lat, lon = get_lat_lon_from_district(district)
+        except Exception:  # noqa: BLE001 - geocoding must never break a reply
+            lat, lon = None, None
+        if lat is None or lon is None:
+            return {"available": False, "district": district,
+                    "reason": "no coordinates known for this district"}
+        days = get_weather_forecast(lat, lon, days=7)
+        if not days:
+            return {"available": False, "district": district,
+                    "reason": "the weather provider did not answer"}
+        today = days[0]
+        return {
+            "available": True,
+            "district": district,
+            "state": state,
+            "today": today,
+            "days": days,
+            "rain_3d_mm": round(sum(float(d.get("precipitation") or 0)
+                                    for d in days[:3]), 1),
+            "rain_7d_mm": round(sum(float(d.get("precipitation") or 0)
+                                    for d in days), 1),
+            "temp_max_7d": max(float(d.get("temp_max") or 0) for d in days),
+        }
+
     if name == "recommend_crops":
         import district_data
         from utils.utils import get_default_npk_from_location
@@ -489,22 +632,88 @@ def run_tool(name: str, args: dict, ctx: dict) -> dict:
 # ---------------------------------------------------------------------------
 # Deterministic routing (no LLM, no cost)
 # ---------------------------------------------------------------------------
-PRICE_WORDS = ("price", "rate", "bhav", "bhaav", "भाव", "दर", "କିମ୍ବା", "ભાવ",
-               "ಬೆಲೆ", "ధర", "விலை", "വില", "ਕੀਮਤ", "দাম", "भाव")
+PRICE_WORDS = ("price", "rate", "bhav", "bhaav", "भाव", "दर", "କିମ୍ବା",
+               "ଦର", "ମୂଲ୍ୟ", "ભાવ", "ಬೆಲೆ", "ధర", "விலை", "വില",
+               "ਕੀਮਤ", "দাম",
+               # Latin transliterations — most people type Kannada/Telugu/Tamil
+               # on a Latin keyboard ("tomato bele"), not in native script.
+               "bele", "belae", "dhara", "dharaa", "vilai", "vila",
+               "daam", "bhao", "mulya", "molya")
 FORECAST_WORDS = ("forecast", "predict", "tomorrow", "next week", "अनुमान",
                   "भविष्य", "ಮುನ್ಸೂಚನೆ", "అంచనా", "முன்னறிவிப்பு", "പ്രവചനം",
                   "अंदाज", "અનુમાન", "পূর্বাভাস", "ਅੰਦਾਜ਼ਾ", "ପୂର୍ବାନୁମାନ")
+# Weather is answered from the real Open-Meteo forecast for the farmer's
+# district, so "will it rain?" never turns into "which crop?". "whether" is
+# included because voice input and fast typing turn "weather" into it.
+WEATHER_WORDS = ("weather", "whether", "temperature", "rain", "raining", "rainfall",
+                 "humidity", "mausam", "barish", "baarish", "barsaath",
+                 "हवामान", "मौसम", "बारिश", "वर्षा", "ಅಂದಾಜು ಮಳೆ", "ಹವಾಮಾನ",
+                 "ಮಳೆ", "వాతావరణం", "వర్షం", "వాన", "வானிலை", "மழை",
+                 "കാലാവസ്ഥ", "മഴ", "હવામાન", "વરસાદ", "আবহাওয়া", "বৃষ্টি",
+                 "ਮੌਸਮ", "ਬਾਰਿਸ਼", "ପାଗ", "ବର୍ଷା")
 SCHEME_WORDS = ("scheme", "yojana", "योजना", "subsidy", "pm kisan", "kcc",
                 "ଯୋଜନା", "યોજના", "ಯೋಜನೆ", "పథకం", "திட்டம்", "പദ്ധതി",
                 "ਯੋਜਨਾ", "প্রকল্প")
 
 NAV_PAGES = {
+    "home": ("home", "home page", "dashboard", "होम", "मुख्य पृष्ठ",
+             "ಮುಖಪುಟ", "ముఖ్య పేజీ", "హోమ్", "முகப்பு", "ഹോം", "હોમ",
+             "হোম", "ਹੋਮ", "ହୋମ"),
     "market": ("market", "mandi", "मंडी", "ಮಾರುಕಟ್ಟೆ", "మార్కెట్", "சந்தை", "മാർക്കറ്റ്", "બજાર", "বাজার", "ਮੰਡੀ", "ବଜାର"),
-    "predict": ("forecast page", "predict", "prediction"),
-    "rotation": ("rotation", "फसल चक्र", "ಬೆಳೆ ಸರದಿ"),
-    "fertilizer": ("fertilizer", "fertiliser", "खाद", "ಗೊಬ್ಬರ"),
-    "crops": ("crop recommendation", "which crop", "कौन सी फसल", "ಯಾವ ಬೆಳೆ"),
+    "predict": ("forecast page", "predict", "prediction", "price forecast",
+                "भाव अनुमान", "ಬೆಲೆ ಮುನ್ಸೂಚನೆ", "ధర అంచనా", "விலை முன்னறிவிப்பு",
+                "വില പ്രവചനം", "ભાવ અનુમાન", "দাম পূর্বাভাস", "ਭਾਅ ਅੰਦਾਜ਼ਾ",
+                "ଦର ପୂର୍ବାନୁମାନ"),
+    "rotation": ("rotation", "crop rotation", "फसल चक्र", "ಬೆಳೆ ಸರದಿ",
+                 "பயிர் சுழற்சி", "വിള ചക്രം"),
+    "fertilizer": ("fertilizer", "fertiliser", "खाद", "खात", "ಗೊಬ್ಬರ", "ఎరువులు",
+                   "உரம்", "വളം", "ખાતર", "সার", "ਖਾਦ", "ଖତ"),
+    "crops": ("crop recommendation", "which crop", "कौन सी फसल", "ಯಾವ ಬೆಳೆ",
+              "ఏ పంట", "எந்த பயிர்", "ഏത് വിള", "કયો પાક", "কোন ফসল",
+              "ਕਿਹੜੀ ਫ਼ਸਲ", "କେଉଁ ଫସଲ"),
+    "profile": ("profile", "my account", "प्रोफ़ाइल", "प्रोफाइल", "ಪ್ರೊಫೈಲ್",
+                "ప్రొఫైల్", "சுயவிவரம்", "പ്രൊഫൈൽ", "પ્રોફાઇલ", "প্রোফাইল",
+                "ਪ੍ਰੋਫਾਈਲ", "ପ୍ରୋଫାଇଲ"),
 }
+
+# Localised screen names, used in the spoken reply and on the action button so a
+# navigation answer reads "ಮಾರುಕಟ್ಟೆ ತೆರೆಯುತ್ತಿದ್ದೇನೆ", not mixed English.
+PAGE_NAMES = {
+    "en": {"home": "Home", "market": "Market", "predict": "Price forecast",
+           "crops": "Crop suggestions", "rotation": "Crop rotation",
+           "fertilizer": "Fertilizer advice", "profile": "Profile"},
+    "hi": {"home": "मुख्य पृष्ठ", "market": "मंडी भाव", "predict": "भाव अनुमान",
+           "crops": "फसल सुझाव", "rotation": "फसल चक्र", "fertilizer": "खाद सलाह",
+           "profile": "प्रोफ़ाइल"},
+    "kn": {"home": "ಮುಖಪುಟ", "market": "ಮಾರುಕಟ್ಟೆ", "predict": "ಬೆಲೆ ಮುನ್ಸೂಚನೆ",
+           "crops": "ಬೆಳೆ ಸಲಹೆ", "rotation": "ಬೆಳೆ ಸರದಿ", "fertilizer": "ಗೊಬ್ಬರ ಸಲಹೆ",
+           "profile": "ಪ್ರೊಫೈಲ್"},
+    "te": {"home": "హోమ్", "market": "మార్కెట్", "predict": "ధర అంచనా",
+           "crops": "పంట సూచనలు", "rotation": "పంట మార్పిడి", "fertilizer": "ఎరువుల సలహా",
+           "profile": "ప్రొఫైల్"},
+    "ta": {"home": "முகப்பு", "market": "சந்தை", "predict": "விலை முன்னறிவிப்பு",
+           "crops": "பயிர் பரிந்துரை", "rotation": "பயிர் சுழற்சி", "fertilizer": "உர ஆலோசனை",
+           "profile": "சுயவிவரம்"},
+    "ml": {"home": "ഹോം", "market": "മാർക്കറ്റ്", "predict": "വില പ്രവചനം",
+           "crops": "വിള നിർദ്ദേശം", "rotation": "വിള ചക്രം", "fertilizer": "വളം ഉപദേശം",
+           "profile": "പ്രൊഫൈൽ"},
+    "mr": {"home": "होम", "market": "बाजारभाव", "predict": "भाव अंदाज",
+           "crops": "पीक सल्ला", "rotation": "पीक फेरपालट", "fertilizer": "खत सल्ला",
+           "profile": "प्रोफाइल"},
+    "gu": {"home": "હોમ", "market": "બજાર", "predict": "ભાવ અનુમાન",
+           "crops": "પાક સૂચન", "rotation": "પાક ફેરબદલી", "fertilizer": "ખાતર સલાહ",
+           "profile": "પ્રોફાઇલ"},
+    "bn": {"home": "হোম", "market": "বাজার", "predict": "দাম পূর্বাভাস",
+           "crops": "ফসল সুপারিশ", "rotation": "ফসল আবর্তন", "fertilizer": "সার পরামর্শ",
+           "profile": "প্রোফাইল"},
+    "pa": {"home": "ਹੋਮ", "market": "ਮੰਡੀ", "predict": "ਭਾਅ ਅੰਦਾਜ਼ਾ",
+           "crops": "ਫ਼ਸਲ ਸਿਫ਼ਾਰਸ਼", "rotation": "ਫ਼ਸਲ ਚੱਕਰ", "fertilizer": "ਖਾਦ ਸਲਾਹ",
+           "profile": "ਪ੍ਰੋਫਾਈਲ"},
+    "or": {"home": "ହୋମ", "market": "ବଜାର", "predict": "ଦର ପୂର୍ବାନୁମାନ",
+           "crops": "ଫସଲ ସୁପାରିଶ", "rotation": "ଫସଲ ଚକ୍ର", "fertilizer": "ଖତ ପରାମର୍ଶ",
+           "profile": "ପ୍ରୋଫାଇଲ"},
+}
+
 
 DISTRICT_HINT = re.compile(r"\b(?:in|at|near)\s+([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)?)", re.I)
 
@@ -526,6 +735,43 @@ def _known_commodities() -> List[str]:
         return price_store.distinct_commodities()
     except Exception:  # noqa: BLE001
         return []
+
+
+PLACE_STOPWORDS = {
+    "the", "this", "that", "my", "our", "next", "coming", "few", "two",
+    "three", "four", "five", "seven", "ten", "today", "tomorrow",
+    "morning", "evening", "night", "week", "month", "days", "day",
+    "karnataka", "andhra", "state", "district", "area", "village",
+}
+
+
+def _question_place(question: str) -> Optional[str]:
+    """A place the farmer named in the question ("weather in Kalaburagi").
+
+    Only used for weather: a price answer stays on the saved district, because
+    mandi prices need a market, not just a name.
+    """
+    for match in DISTRICT_HINT.finditer(question or ""):
+        candidate = match.group(1).strip().rstrip("?.,!")
+        words = candidate.split()
+        # "in the morning" must not become a place called "The Morning".
+        if any(w.lower() in PLACE_STOPWORDS for w in words):
+            continue
+        if len(candidate) >= 4:
+            return candidate.title()
+    return None
+
+
+def _has_term(text: str, term: str) -> bool:
+    """Whole-token match for Latin terms, substring for native scripts.
+
+    Substring matching made "moderate rainfall" a price question ("rate"
+    inside "moderate"). Native-script terms have no word boundaries in the
+    same sense, so they stay substring matches.
+    """
+    if term.isascii():
+        return re.search(rf"(?<![a-z]){re.escape(term)}(?![a-z])", text) is not None
+    return term in text
 
 
 def detect_intent(question: str, ctx: dict) -> Optional[dict]:
@@ -556,12 +802,19 @@ def detect_intent(question: str, ctx: dict) -> Optional[dict]:
     except Exception:  # noqa: BLE001
         pass
 
-    wants_forecast = any(w in q for w in FORECAST_WORDS)
-    wants_price = any(w in q for w in PRICE_WORDS)
-    wants_scheme = any(w in q for w in SCHEME_WORDS)
+    wants_forecast = any(_has_term(q, w) for w in FORECAST_WORDS)
+    wants_price = any(_has_term(q, w) for w in PRICE_WORDS)
+    wants_scheme = any(_has_term(q, w) for w in SCHEME_WORDS)
+    wants_weather = any(_has_term(q, w) for w in WEATHER_WORDS)
 
-    if wants_scheme:
+    if wants_scheme and not wants_weather:
         return {"kind": "scheme"}
+
+    # A weather question is about the district, not a commodity: answering it
+    # with "which crop?" was the bug. A named crop still wins, because
+    # "tomato price after rain" is a price question.
+    if wants_weather and not crop:
+        return {"kind": "weather", "district": _question_place(question)}
 
     if wants_price or wants_forecast:
         if not crop:
@@ -569,7 +822,7 @@ def detect_intent(question: str, ctx: dict) -> Optional[dict]:
         return {"kind": "forecast" if wants_forecast else "price", "crop": crop}
 
     for page, words in NAV_PAGES.items():
-        if any(w in q for w in words):
+        if any(_has_term(q, w) for w in words):
             return {"kind": "navigate", "page": page, "crop": crop or None}
 
     return None
@@ -589,9 +842,20 @@ PHRASES = {
         "forecast": "{crop} is {price} today. The 14-day model expects {change} ({mape}% error on backtests).",
         "forecast_none": "There is not enough real mandi history to forecast {crop} yet.",
         "need_crop": "Which crop? For example: “tomato price in Kolar”.",
+        "weather": ("{where}: today {tmin}–{tmax}°C, {today_rain} mm rain. "
+                    "Next 7 days: {rain7} mm rain, up to {tmax7}°C."),
+        "weather_none": ("I could not fetch the weather for {where} right now. "
+                         "Please try again in a few minutes."),
+        "offtopic": ("I only help with farming — crops, soil, irrigation, weather, "
+                     "mandi prices, 14-day forecasts, livestock and government "
+                     "schemes. Ask me something about your farm and I will answer."),
         "scheme": "Official scheme pages are listed below. I will only open government domains.",
         "nav": "Opening {page} for you.",
-        "unsure": "I can answer mandi prices, 14-day forecasts, crop suggestions and open app screens.",
+        "unsure": ("I can help with mandi prices, 14-day forecasts, weather, "
+                   "crops and schemes — and with any other question too."),
+        "unavailable": ("The assistant is temporarily unavailable (all free providers "
+                        "failed). Price and forecast questions still work — try "
+                        "“tomato price”."),
     },
     "hi": {
         "price": "{where} में {crop} का भाव {market} में {price} प्रति क्विंटल है ({date})।",
@@ -599,9 +863,19 @@ PHRASES = {
         "forecast": "{crop} आज {price} है। 14 दिन का मॉडल {change} का अनुमान देता है ({mape}% त्रुटि)।",
         "forecast_none": "{crop} के लिए अभी पर्याप्त असली मंडी इतिहास नहीं है।",
         "need_crop": "कौन सी फसल? जैसे: “कोलार में टमाटर का भाव”।",
+        "weather": ("{where}: आज {tmin}–{tmax}°C, बारिश {today_rain} मिमी। "
+                    "अगले 7 दिनों में {rain7} मिमी बारिश, अधिकतम {tmax7}°C।"),
+        "weather_none": ("{where} का मौसम अभी नहीं मिल सका। कुछ मिनट बाद फिर कोशिश करें।"),
+        "offtopic": ("मैं केवल खेती से जुड़े सवालों में मदद करता हूँ — फसल, मिट्टी, "
+                     "सिंचाई, मौसम, मंडी भाव, पशुधन और सरकारी योजनाएँ। अपने खेत के बारे में पूछें।"),
         "scheme": "सरकारी योजना के पेज नीचे हैं। मैं केवल सरकारी वेबसाइट खोलूँगा।",
         "nav": "{page} खोल रहा हूँ।",
         "unsure": "मैं मंडी भाव, 14 दिन का अनुमान, फसल सुझाव और ऐप के पेज बता सकता हूँ।",
+        "unavailable": ("सहायक अभी उपलब्ध नहीं है। भाव और अनुमान के सवाल अभी भी काम करते हैं — "
+                        "जैसे “टमाटर का भाव”।"),
+        "setup": ("खुले सवालों के लिए अभी कोई भाषा-सेवा जोड़ी नहीं गई है। "
+                  "मंडी भाव, 14 दिन का अनुमान और ऐप के पेज अभी काम करते हैं — "
+                  "जैसे “टमाटर का भाव”।"),
     },
     "kn": {
         "price": "{where} ನಲ್ಲಿ {crop} ಬೆಲೆ {market} ನಲ್ಲಿ ಪ್ರತಿ ಕ್ವಿಂಟಾಲ್‌ಗೆ {price} ({date}).",
@@ -609,9 +883,20 @@ PHRASES = {
         "forecast": "{crop} ಇಂದು {price}. 14 ದಿನದ ಮಾದರಿ {change} ನಿರೀಕ್ಷಿಸುತ್ತದೆ ({mape}% ದೋಷ).",
         "forecast_none": "{crop} ಮುನ್ಸೂಚನೆಗೆ ಸಾಕಷ್ಟು ನಿಜವಾದ ಇತಿಹಾಸ ಇಲ್ಲ.",
         "need_crop": "ಯಾವ ಬೆಳೆ? ಉದಾ: “ಕೋಲಾರದಲ್ಲಿ ಟೊಮೆಟೊ ಬೆಲೆ”.",
+        "weather": ("{where}: ಇಂದು {tmin}–{tmax}°C, ಮಳೆ {today_rain} ಮಿ.ಮೀ. "
+                    "ಮುಂದಿನ 7 ದಿನಗಳಲ್ಲಿ {rain7} ಮಿ.ಮೀ ಮಳೆ, ಗರಿಷ್ಠ {tmax7}°C."),
+        "weather_none": ("{where} ನ ಹವಾಮಾನ ಈಗ ಸಿಗಲಿಲ್ಲ. ಕೆಲವು ನಿಮಿಷಗಳ ನಂತರ ಮತ್ತೆ ಪ್ರಯತ್ನಿಸಿ."),
+        "offtopic": ("ನಾನು ಕೇವಲ ಕೃಷಿಗೆ ಸಂಬಂಧಿಸಿದ ಪ್ರಶ್ನೆಗಳಿಗೆ ಉತ್ತರಿಸುತ್ತೇನೆ — ಬೆಳೆ, ಮಣ್ಣು, "
+                     "ನೀರಾವರಿ, ಹವಾಮಾನ, ಮಾರುಕಟ್ಟೆ ಬೆಲೆ, ಪಶುಸಂಗೋಪನೆ ಮತ್ತು ಸರ್ಕಾರಿ ಯೋಜನೆಗಳು. "
+                     "ನಿಮ್ಮ ಹೊಲದ ಬಗ್ಗೆ ಕೇಳಿ."),
         "scheme": "ಸರ್ಕಾರಿ ಯೋಜನೆ ಪುಟಗಳು ಕೆಳಗಿವೆ. ನಾನು ಸರ್ಕಾರಿ ತಾಣಗಳನ್ನಷ್ಟೇ ತೆರೆಯುತ್ತೇನೆ.",
         "nav": "{page} ತೆರೆಯುತ್ತಿದ್ದೇನೆ.",
         "unsure": "ನಾನು ಮಂಡಿ ಬೆಲೆ, 14 ದಿನದ ಮುನ್ಸೂಚನೆ, ಬೆಳೆ ಸಲಹೆ ಮತ್ತು ಪುಟಗಳನ್ನು ತೋರಿಸಬಲ್ಲೆ.",
+        "unavailable": ("ಸಹಾಯಕ ಸದ್ಯಕ್ಕೆ ಲಭ್ಯವಿಲ್ಲ. ಬೆಲೆ ಮತ್ತು ಮುನ್ಸೂಚನೆಯ ಪ್ರಶ್ನೆಗಳು ಇನ್ನೂ "
+                        "ಕೆಲಸ ಮಾಡುತ್ತವೆ — ಉದಾ: “ಟೊಮೆಟೊ ಬೆಲೆ”."),
+        "setup": ("ತೆರೆದ ಪ್ರಶ್ನೆಗಳಿಗೆ ಇನ್ನೂ ಭಾಷಾ ಸೇವೆ ಸೇರಿಸಿಲ್ಲ. ಮಂಡಿ ಬೆಲೆ, 14 ದಿನದ "
+                  "ಮುನ್ಸೂಚನೆ ಮತ್ತು ಯೋಜನೆಗಳ ಪ್ರಶ್ನೆಗಳು ಈಗಲೇ ಕೆಲಸ ಮಾಡುತ್ತವೆ — "
+                  "ಉದಾ: “ಟೊಮೆಟೊ ಬೆಲೆ”."),
     },
     "te": {
         "price": "{where} లో {crop} ధర {market} లో క్వింటాల్‌కు {price} ({date}).",
@@ -619,6 +904,12 @@ PHRASES = {
         "forecast": "{crop} ఈరోజు {price}. 14 రోజుల మోడల్ {change} అంచనా వేస్తోంది ({mape}% లోపు).",
         "forecast_none": "{crop} అంచనాకు సరిపడా నిజమైన చరిత్ర లేదు.",
         "need_crop": "ఏ పంట? ఉదా: “కోలార్‌లో టొమాటో ధర”.",
+        "weather": ("{where}: ఈరోజు {tmin}–{tmax}°C, వర్షం {today_rain} మి.మీ. "
+                    "వచ్చే 7 రోజుల్లో {rain7} మి.మీ వర్షం, గరిష్ఠం {tmax7}°C."),
+        "weather_none": ("{where} వాతావరణం ఇప్పుడు రాలేదు. కొన్ని నిమిషాల తర్వాత మళ్లీ ప్రయత్నించండి."),
+        "offtopic": ("నేను వ్యవసాయానికి సంబంధించిన ప్రశ్నలకే సమాధానం ఇస్తాను — పంట, నేల, "
+                     "నీటిపారుదల, వాతావరణం, మార్కెట్ ధరలు, పశుసంవర్ధకం, ప్రభుత్వ పథకాలు. "
+                     "మీ పొలం గురించి అడగండి."),
         "scheme": "ప్రభుత్వ పథకాల పేజీలు క్రింద ఉన్నాయి. నేను ప్రభుత్వ సైట్లను మాత్రమే తెరుస్తాను.",
         "nav": "{page} తెరుస్తున్నాను.",
         "unsure": "నేను మండి ధరలు, 14 రోజుల అంచనా, పంట సూచనలు చెప్పగలను.",
@@ -629,6 +920,12 @@ PHRASES = {
         "forecast": "{crop} இன்று {price}. 14 நாள் மாதிரி {change} எதிர்பார்க்கிறது ({mape}% பிழை).",
         "forecast_none": "{crop} முன்னறிவிப்புக்கு போதுமான உண்மையான வரலாறு இல்லை.",
         "need_crop": "எந்த பயிர்? எ.கா: “கோலாரில் தக்காளி விலை”.",
+        "weather": ("{where}: இன்று {tmin}–{tmax}°C, மழை {today_rain} மி.மீ. "
+                    "அடுத்த 7 நாட்களில் {rain7} மி.மீ மழை, அதிகபட்சம் {tmax7}°C."),
+        "weather_none": ("{where} வானிலை இப்போது கிடைக்கவில்லை. சில நிமிடங்கள் கழித்து மீண்டும் முயலுங்கள்."),
+        "offtopic": ("நான் விவசாயம் சார்ந்த கேள்விகளுக்கு மட்டுமே பதில் சொல்வேன் — பயிர், மண், "
+                     "நீர்ப்பாசனம், வானிலை, சந்தை விலை, கால்நடை, அரசு திட்டங்கள். "
+                     "உங்கள் நிலத்தைப் பற்றி கேளுங்கள்."),
         "scheme": "அரசு திட்டப் பக்கங்கள் கீழே உள்ளன. அரசு தளங்களை மட்டுமே திறப்பேன்.",
         "nav": "{page} திறக்கிறேன்.",
         "unsure": "சந்தை விலை, 14 நாள் முன்னறிவிப்பு, பயிர் பரிந்துரைகள் சொல்ல முடியும்.",
@@ -639,6 +936,12 @@ PHRASES = {
         "forecast": "{crop} ഇന്ന് {price}. 14 ദിവസ മാതൃക {change} പ്രതീക്ഷിക്കുന്നു ({mape}% പിശക്).",
         "forecast_none": "{crop} പ്രവചനത്തിന് മതിയായ യഥാർത്ഥ ചരിത്രമില്ല.",
         "need_crop": "ഏത് വിള? ഉദാ: “കോലാറിൽ തക്കാളി വില”.",
+        "weather": ("{where}: ഇന്ന് {tmin}–{tmax}°C, മഴ {today_rain} മി.മീ. "
+                    "അടുത്ത 7 ദിവസം {rain7} മി.മീ മഴ, പരമാവധി {tmax7}°C."),
+        "weather_none": ("{where} കാലാവസ്ഥ ഇപ്പോൾ ലഭിച്ചില്ല. കുറച്ച് മിനിറ്റ് കഴിഞ്ഞ് വീണ്ടും ശ്രമിക്കുക."),
+        "offtopic": ("ഞാൻ കൃഷിയുമായി ബന്ധപ്പെട്ട ചോദ്യങ്ങൾക്ക് മാത്രം ഉത്തരം നൽകും — വിള, മണ്ണ്, "
+                     "ജലസേചനം, കാലാവസ്ഥ, മാർക്കറ്റ് വില, കന്നുകാലി, സർക്കാർ പദ്ധതികൾ. "
+                     "നിങ്ങളുടെ കൃഷിയെപ്പറ്റി ചോദിക്കുക."),
         "scheme": "സർക്കാർ പദ്ധതി പേജുകൾ താഴെയുണ്ട്. സർക്കാർ സൈറ്റുകൾ മാത്രം തുറക്കും.",
         "nav": "{page} തുറക്കുന്നു.",
         "unsure": "മണ്ഡി വില, 14 ദിവസ പ്രവചനം, വിള നിർദ്ദേശങ്ങൾ എനിക്ക് നൽകാം.",
@@ -721,6 +1024,28 @@ def deterministic_answer(intent: dict, ctx: dict, lang: str) -> dict:
     if intent["kind"] == "need_crop":
         return {"reply": p["need_crop"], "cards": [], "actions": [], "source": "rules"}
 
+    if intent["kind"] == "weather":
+        asked = (intent.get("district") or "").strip()
+        result = run_tool("get_weather", {"district": asked} if asked else {}, ctx)
+        if asked:
+            where = asked
+        if not result.get("available"):
+            return {"reply": (p.get("weather_none") or PHRASES["en"]["weather_none"])
+                             .format(where=where),
+                    "cards": [], "actions": [], "source": "rules"}
+        today = result["today"]
+        return {
+            "reply": (p.get("weather") or PHRASES["en"]["weather"]).format(
+                where=where, tmin=round(float(today.get("temp_min") or 0)),
+                tmax=round(float(today.get("temp_max") or 0)),
+                today_rain=round(float(today.get("precipitation") or 0), 1),
+                rain7=result["rain_7d_mm"], tmax7=round(result["temp_max_7d"]),
+            ),
+            "cards": [],
+            "actions": [],
+            "source": "weather",
+        }
+
     if intent["kind"] == "price":
         result = run_tool("get_mandi_prices", {"commodity": intent["crop"]}, ctx)
         if not result.get("available"):
@@ -767,10 +1092,12 @@ def deterministic_answer(intent: dict, ctx: dict, lang: str) -> dict:
 
     if intent["kind"] == "navigate":
         result = run_tool("navigate", {"page": intent["page"], "commodity": intent.get("crop")}, ctx)
+        page_name = PAGE_NAMES.get(lang, PAGE_NAMES["en"]).get(
+            intent["page"], intent["page"].capitalize())
         return {
-            "reply": p["nav"].format(page=intent["page"].capitalize()),
+            "reply": p["nav"].format(page=page_name),
             "cards": [],
-            "actions": [{"type": "navigate", "url": result["url"], "label": intent["page"].capitalize(),
+            "actions": [{"type": "navigate", "url": result["url"], "label": page_name,
                          "auto": True}],
             "source": "rules",
         }
@@ -788,6 +1115,89 @@ def deterministic_answer(intent: dict, ctx: dict, lang: str) -> dict:
     return {"reply": p["unsure"], "cards": [], "actions": [], "source": "rules"}
 
 
+# The assistant answers *only* inside this domain: agriculture, irrigation,
+# soil and inputs, livestock, farm machinery and money, climate and weather,
+# government schemes. A question with none of these words is refused instead
+# of being sent to the LLM, which also keeps the free Gemini quota for real
+# farming questions. Deliberately generous: a missing keyword costs a refusal,
+# so the list carries crop names, inputs, practices and money words.
+APP_SCOPE_WORDS = (
+    # money / market
+    "price", "rate", "mandi", "market", "msp", "forecast", "predict", "sell",
+    "buy", "profit", "loss", "demand", "supply", "export", "import",
+    # weather and climate
+    "weather", "climate", "rain", "monsoon", "temperature", "humidity",
+    "drought", "flood", "heat", "frost", "hail", "wind", "season", "kharif",
+    "rabi", "zaid", "summer", "winter",
+    # crop and field work
+    "crop", "seed", "seedling", "nursery", "sow", "sowing", "transplant",
+    "harvest", "thresh", "yield", "field", "plot", "acre", "hectare",
+    "variety", "hybrid", "germination", "spacing", "weed", "mulch", "prune",
+    "graft", "crop rotation", "rotation", "intercrop", "organic", "natural",
+    # soil and inputs
+    "soil", "fertilizer", "fertiliser", "urea", "dap", "npk", "potash",
+    "compost", "manure", "vermicompost", "lime", "gypsum", "micronutrient",
+    "zinc", "boron", "pesticide", "insecticide", "fungicide", "herbicide",
+    "neem", "spray", "dose", "pest", "disease", "insect", "worm", "borer",
+    "aphid", "thrips", "blight", "rot", "rust", "mildew", "virus", "fungus",
+    "nematode", "locust", "rodent", "weedicide", "pheromone", "trap",
+    # water and irrigation
+    "irrigation", "water", "drip", "sprinkler", "borewell", "canal", "tank",
+    "pump", "moisture", "groundwater", "rainwater", "mulching", "drainage",
+    # farm, livestock, machinery
+    "farm", "farmer", "farming", "agriculture", "agri", "cultivation",
+    "kisan", "krishi", "livestock", "cattle", "cow", "buffalo", "goat",
+    "poultry", "hen", "sheep", "fish", "fishery", "dairy", "milk", "manure",
+    "tractor", "harvester", "tiller", "implement", "sprayer", "storage",
+    "store", "storing", "warehouse", "cold storage", "silo", "packaging",
+    "transport",
+    # schemes and money help
+    "scheme", "yojana", "subsidy", "loan", "credit", "kcc", "insurance",
+    "claim", "pm kisan", "pmfby", "soil health card", "enam", "agmarknet",
+    "registration", "aadhaar", "bank", "installment", "pension",
+    # crops (common names so a bare crop question is never refused)
+    "tomato", "onion", "potato", "rice", "paddy", "wheat", "maize", "ragi",
+    "millet", "jowar", "bajra", "cotton", "sugarcane", "banana", "chilli",
+    "brinjal", "groundnut", "soyabean", "soybean", "gram", "tur", "moong",
+    "urad", "lentil", "mustard", "sesame", "coconut", "arecanut", "coffee",
+    "tea", "rubber", "mango", "grapes", "papaya", "lemon", "ginger",
+    "turmeric", "garlic", "coriander", "cumin", "cardamom", "pepper",
+    "cauliflower", "cabbage", "carrot", "beans", "peas", "cucumber",
+    "pumpkin", "gourd", "okra", "spinach", "floriculture", "flower",
+    # greetings and courtesies stay allowed (they are not questions)
+    "hello", "hi", "namaste", "namaskara", "thanks", "thank", "help",
+    # native script
+    "भाव", "मंडी", "फसल", "खाद", "मौसम", "बारिश", "सिंचाई", "योजना", "मिट्टी",
+    "ಬೆಲೆ", "ಬೆಳೆ", "ಮಳೆ", "ಗೊಬ್ಬರ", "ನೀರಾವರಿ", "ಯೋಜನೆ", "ಮಣ್ಣು",
+    "ధర", "పంట", "వర్షం", "ఎరువులు", "నీటిపారుదల", "పథకం", "నేల",
+    "விலை", "பயிர்", "மழை", "உரம்", "நீர்ப்பாசனம்", "திட்டம்", "மண்",
+    "വില", "വിള", "മഴ", "വളം", "ജലസേചനം", "പദ്ധതി", "മണ്ണ്",
+    "ભાવ", "પાક", "વરસાદ", "ખાતર", "સિંચાઈ", "યોજના", "જમીન",
+    "দাম", "ফসল", "বৃষ্টি", "সার", "সেচ", "প্রকল্প", "মাটি",
+    "ਭਾਅ", "ਫ਼ਸਲ", "ਬਾਰਿਸ਼", "ਖਾਦ", "ਸਿੰਚਾਈ", "ਯੋਜਨਾ", "ਮਿੱਟੀ",
+    "ଦର", "ଫସଲ", "ବର୍ଷା", "ଖତ", "ଜଳସେଚନ", "ଯୋଜନା", "ମାଟି",
+)
+
+
+def _scope_term(text: str, term: str) -> bool:
+    """Whole-word match that also accepts a plain plural ("onions", "crops").
+
+    The price router uses strict `_has_term` so "moderate rainfall" cannot
+    become a price question; the scope gate wants the opposite, because
+    refusing "how do I store onions?" over the trailing s is the worse bug.
+    """
+    if not term.isascii():
+        return term in text
+    suffix = "(?:e?s)?" if len(term) >= 4 else ""
+    return re.search(rf"(?<![a-z]){re.escape(term)}{suffix}(?![a-z])", text) is not None
+
+
+def in_app_scope(question: str) -> bool:
+    """True when the question belongs to farming, water, weather or schemes."""
+    q = (question or "").lower()
+    return any(_scope_term(q, w.lower()) for w in APP_SCOPE_WORDS)
+
+
 # ---------------------------------------------------------------------------
 # System prompt
 # ---------------------------------------------------------------------------
@@ -795,12 +1205,18 @@ def build_system_prompt(ctx: dict) -> str:
     """Grounded prompt. Personal data beyond farm context is never injected."""
     today = time.strftime("%d %B %Y")
     lines = [
-        "You are AgroSmart AI, a practical farming assistant for Indian farmers.",
+        "You are FarmIntel, a practical farming assistant for Indian farmers.",
         f"Today is {today}.",
         "Reply in the farmer's language, in short simple sentences (max 5 lines).",
-        "Use the tools for any price, forecast, crop, fertiliser or rotation "
-        "question. Never invent a price or a date. If a tool returns nothing, "
-        "say plainly that there is no data yet.",
+        "Call the tools for any price, forecast, crop choice, fertiliser or "
+        "rotation question. Never invent a price or a date. If a tool returns "
+        "nothing, say plainly that there is no data yet.",
+        "For general farming practice (pest, disease, dose, sowing time, "
+        "storage) answer briefly from general agronomy and say it is general "
+        "guidance to confirm locally — do not refuse the question.",
+        "You must answer only farming topics: crops, soil, inputs, irrigation,"
+        " livestock, farm machinery and money, weather and climate, and"
+        " government schemes. Do not answer anything else.",
         "Never mention your model, vendors, or that you are an AI language model.",
     ]
     if ctx.get("name"):
@@ -846,9 +1262,24 @@ def answer(question: str, ctx: dict, history: Optional[List[dict]] = None) -> di
         _cache_put(key, result)
         return {**result, "cached": False}
 
-    if not configured():
+    # Agriculture-only gate: nothing outside farming, water, weather or schemes
+    # reaches the model. Refusing here also saves the free Gemini quota for
+    # real farming questions.
+    if not in_app_scope(question):
+        p = _phrases(lang)
         return {
-            "reply": SETUP_HINT,
+            "reply": p.get("offtopic") or PHRASES["en"]["offtopic"],
+            "cards": [],
+            "actions": [],
+            "source": "out_of_scope",
+        }
+
+    if not configured():
+        # English keeps the actionable developer hint; other languages get a
+        # farmer-facing sentence instead of an English key-instruction wall.
+        localized = _phrases(lang).get("setup")
+        return {
+            "reply": localized or SETUP_HINT,
             "cards": [],
             "actions": [],
             "source": "setup",
@@ -869,10 +1300,9 @@ def answer(question: str, ctx: dict, history: Optional[List[dict]] = None) -> di
         text, calls, provider_used = call_llm(messages, TOOL_SCHEMAS)
     except RuntimeError as exc:
         logger.warning("all providers failed: %s", exc)
+        phrases = _phrases(lang)
         return {
-            "reply": ("The assistant is temporarily unavailable (all free providers "
-                      "failed). Price and forecast questions still work — try "
-                      "“tomato price in Kolar”."),
+            "reply": phrases.get("unavailable") or PHRASES["en"]["unavailable"],
             "cards": [],
             "actions": [],
             "source": "error",

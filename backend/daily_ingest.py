@@ -79,12 +79,19 @@ def supabase_mirror(limit_days: int = 3) -> int:
         "Content-Type": "application/json",
         "Prefer": "resolution=merge-duplicates",
     }
-    endpoint = f"{url}/rest/v1/mandi_prices"
+    # on_conflict must name the migration's unique key, otherwise PostgREST
+    # resolves conflicts on the primary key and a day that was already mirrored
+    # comes back as 409 instead of being merged.
+    endpoint = (f"{url}/rest/v1/mandi_prices"
+                "?on_conflict=date,state,district,market,commodity,variety")
     payload = [
         {
             "date": r["date"], "state": r["state"], "district": r["district"],
             "market": r["market"], "commodity": r["commodity"],
-            "variety": r["variety"],
+            # Postgres treats NULLs as distinct in a unique constraint, so a
+            # NULL variety would be re-inserted every night instead of being
+            # merged. Empty string keeps the upsert idempotent.
+            "variety": r["variety"] or "",
             "min_price": r["min_price"], "max_price": r["max_price"],
             "modal_price": r["modal_price"], "source": r["source"],
         }

@@ -23,9 +23,23 @@ interface LanguageContextType {
 const LanguageContext = createContext<LanguageContextType | undefined>(undefined);
 
 function initialLanguage(): Language {
+  // 1. An explicit choice in the app wins.
   const saved = localStorage.getItem(STORAGE_KEY) as Language | null;
   if (saved && LANGUAGES.includes(saved)) return saved;
-  // fall back to the browser language, then the configured default
+
+  // 2. Otherwise follow the language saved in the farmer's profile, so the app
+  //    opens in the language they picked during onboarding.
+  try {
+    const raw = localStorage.getItem('farmintel_profile');
+    if (raw) {
+      const profileLang = JSON.parse(raw)?.language as Language | undefined;
+      if (profileLang && LANGUAGES.includes(profileLang)) return profileLang;
+    }
+  } catch {
+    /* corrupt cache — fall through */
+  }
+
+  // 3. Browser language, then the configured default.
   const nav = (navigator.language || '').split('-')[0] as Language;
   if (LANGUAGES.includes(nav)) return nav;
   return env.defaultLanguage;

@@ -54,7 +54,9 @@ export const env = {
   /** FastAPI origin, e.g. http://127.0.0.1:8000 */
   apiBaseUrl: str(raw.VITE_API_BASE_URL, 'http://127.0.0.1:8000').replace(/\/$/, ''),
   supabaseUrl: str(raw.VITE_SUPABASE_URL),
-  supabaseAnonKey: str(raw.VITE_SUPABASE_ANON_KEY),
+  // Supabase renamed the browser key to "publishable key" (sb_publishable_…).
+  // Accept either name so an existing .env keeps working.
+  supabaseAnonKey: str(raw.VITE_SUPABASE_ANON_KEY) || str(raw.VITE_SUPABASE_PUBLISHABLE_KEY),
   enableGoogleLogin: flag(raw.VITE_ENABLE_GOOGLE_LOGIN, true),
   enableEmailOtp: flag(raw.VITE_ENABLE_EMAIL_OTP, true),
   speechProvider: asSpeechProvider(raw.VITE_SPEECH_PROVIDER),

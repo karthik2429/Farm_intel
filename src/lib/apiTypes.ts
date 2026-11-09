@@ -51,6 +51,29 @@ export interface CropEntry {
   mandiPrice?: number | null;
   mandiMin?: number | null;
   mandiMax?: number | null;
+  /** provenance of the figure shown on the detail card */
+  mandiBadge?: string | null;
+  mandiIsReal?: boolean | null;
+  mandiMarket?: string | null;
+  mandiScope?: string | null;
+  /** Evidence behind the rank, straight from the advisor. */
+  ml_prob?: number | null;
+  soil_fit?: number | null;
+  climate_fit?: number | null;
+  hist_score?: number | null;
+  /** Share of the district's cropped area this crop already holds. */
+  region_share?: number | null;
+  market_score?: number | null;
+  market_price?: number | null;
+  market_price_source?: string | null;
+  market_price_date?: string | null;
+  market_price_scope?: string | null;
+  market_price_badge?: string | null;
+  price_market?: string | null;
+  price_district?: string | null;
+  yield_t_ha?: [number, number] | null;
+  /** yield (t/ha) × 10 × ₹/quintal — revenue before input costs. */
+  gross_return_per_ha?: number | null;
   [key: string]: unknown;
 }
 

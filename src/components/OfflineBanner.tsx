@@ -66,7 +66,7 @@ export function InstallPrompt({ className }: { className?: string }) {
         <Download className="h-4 w-4" strokeWidth={2} />
       </span>
       <p className="min-w-0 flex-1 text-[11.5px] leading-snug text-ink-muted">
-        Install AgroSmart for offline prices.
+        Install FarmIntel for offline prices.
       </p>
       <button
         type="button"

@@ -1,7 +1,6 @@
 import * as React from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  Camera,
   ExternalLink,
   Loader2,
   Mic,
@@ -77,18 +76,21 @@ interface Message {
   setup?: boolean;
 }
 
+// Quick prompts are place-free on purpose: the assistant answers for the
+// farmer's saved district, and it does not parse a place out of the question
+// ("…in Kolar" was ignored, so the old prompt promised something it did not do).
 const QUICK = {
-  en: ['Tomato price in Kolar', '14-day onion forecast', 'Which crop should I sow?', 'Government schemes'],
-  hi: ['कोलार में टमाटर का भाव', 'प्याज़ का 14 दिन का अनुमान', 'कौन सी फसल बोऊँ?', 'सरकारी योजनाएँ'],
-  kn: ['ಕೋಲಾರದಲ್ಲಿ ಟೊಮೆಟೊ ಬೆಲೆ', 'ಈರುಳ್ಳಿ 14 ದಿನದ ಮುನ್ಸೂಚನೆ', 'ಯಾವ ಬೆಳೆ ಬೆಳೆಯಬೇಕು?', 'ಸರ್ಕಾರಿ ಯೋಜನೆಗಳು'],
-  te: ['కోలార్‌లో టొమాటో ధర', 'ఉల్లిపాయ 14 రోజుల అంచనా', 'ఏ పంట వేయాలి?', 'ప్రభుత్వ పథకాలు'],
-  ta: ['கோலாரில் தக்காளி விலை', 'வெங்காயம் 14 நாள் முன்னறிவிப்பு', 'எந்த பயிர் விதைக்க?', 'அரசு திட்டங்கள்'],
-  ml: ['കോലാറിൽ തക്കാളി വില', 'സവാള 14 ദിവസ പ്രവചനം', 'ഏത് വിള വിതയ്ക്കണം?', 'സർക്കാർ പദ്ധതികൾ'],
-  mr: ['कोलारमध्ये टोमॅटोचा भाव', 'कांद्याचा 14 दिवसांचा अंदाज', 'कोणते पीक पेरू?', 'सरकारी योजना'],
-  gu: ['કોલારમાં ટામેટાનો ભાવ', 'ડુંગળી 14 દિવસનું અનુમાન', 'કયો પાક વાવું?', 'સરકારી યોજનાઓ'],
-  bn: ['কোলারে টমেটোর দাম', 'পেঁয়াজ ১৪ দিনের পূর্বাভাস', 'কোন ফসল বুনব?', 'সরকারি প্রকল্প'],
-  pa: ['ਕੋਲਾਰ ਵਿੱਚ ਟਮਾਟਰ ਦਾ ਭਾਅ', 'ਪਿਆਜ਼ 14 ਦਿਨਾਂ ਦਾ ਅੰਦਾਜ਼ਾ', 'ਕਿਹੜੀ ਫ਼ਸਲ ਬੀਜਾਂ?', 'ਸਰਕਾਰੀ ਯੋਜਨਾਵਾਂ'],
-  or: ['କୋଲାରରେ ଟମାଟୋ ଦର', 'ପିଆଜ ୧୪ ଦିନର ପୂର୍ବାନୁମାନ', 'କେଉଁ ଫସଲ ବୁଣିବି?', 'ସରକାରୀ ଯୋଜନା'],
+  en: ['Tomato price', '14-day onion forecast', 'Which crop should I sow?', 'Government schemes'],
+  hi: ['टमाटर का भाव', 'प्याज़ का 14 दिन का अनुमान', 'कौन सी फसल बोऊँ?', 'सरकारी योजनाएँ'],
+  kn: ['ಟೊಮೆಟೊ ಬೆಲೆ', 'ಈರುಳ್ಳಿ 14 ದಿನದ ಮುನ್ಸೂಚನೆ', 'ಯಾವ ಬೆಳೆ ಬೆಳೆಯಬೇಕು?', 'ಸರ್ಕಾರಿ ಯೋಜನೆಗಳು'],
+  te: ['టొమాటో ధర', 'ఉల్లిపాయ 14 రోజుల అంచనా', 'ఏ పంట వేయాలి?', 'ప్రభుత్వ పథకాలు'],
+  ta: ['தக்காளி விலை', 'வெங்காயம் 14 நாள் முன்னறிவிப்பு', 'எந்த பயிர் விதைக்க?', 'அரசு திட்டங்கள்'],
+  ml: ['തക്കാളി വില', 'സവാള 14 ദിവസ പ്രവചനം', 'ഏത് വിള വിതയ്ക്കണം?', 'സർക്കാർ പദ്ധതികൾ'],
+  mr: ['टोमॅटोचा भाव', 'कांद्याचा 14 दिवसांचा अंदाज', 'कोणते पीक पेरू?', 'सरकारी योजना'],
+  gu: ['ટામેટાનો ભાવ', 'ડુંગળી 14 દિવસનું અનુમાન', 'કયો પાક વાવું?', 'સરકારી યોજનાઓ'],
+  bn: ['টমেটোর দাম', 'পেঁয়াজ ১৪ দিনের পূর্বাভাস', 'কোন ফসল বুনব?', 'সরকারি প্রকল্প'],
+  pa: ['ਟਮਾਟਰ ਦਾ ਭਾਅ', 'ਪਿਆਜ਼ 14 ਦਿਨਾਂ ਦਾ ਅੰਦਾਜ਼ਾ', 'ਕਿਹੜੀ ਫ਼ਸਲ ਬੀਜਾਂ?', 'ਸਰਕਾਰੀ ਯੋਜਨਾਵਾਂ'],
+  or: ['ଟମାଟୋ ଦର', 'ପିଆଜ ୧୪ ଦିନର ପୂର୍ବାନୁମାନ', 'କେଉଁ ଫସଲ ବୁଣିବି?', 'ସରକାରୀ ଯୋଜନା'],
 };
 
 const ChatPage: React.FC = () => {
@@ -107,7 +109,6 @@ const ChatPage: React.FC = () => {
   const [ttsSupported, setTtsSupported] = React.useState(false);
   const bottomRef = React.useRef<HTMLDivElement>(null);
   const recognitionRef = React.useRef<SpeechRecognitionLike | null>(null);
-  const fileRef = React.useRef<HTMLInputElement>(null);
 
   React.useEffect(() => {
     const w = window as SpeechWindow;
@@ -240,27 +241,6 @@ const ChatPage: React.FC = () => {
     window.speechSynthesis.speak(utter);
   };
 
-  const onPhoto = async (file: File) => {
-    if (file.size > 1_000_000) {
-      setMessages((m) => [
-        ...m,
-        { id: `a${Date.now()}`, role: 'assistant', text: 'That photo is over 1 MB. Please pick a smaller one so it uploads quickly.' },
-      ]);
-      return;
-    }
-    setMessages((m) => [
-      ...m,
-      {
-        id: `a${Date.now()}`,
-        role: 'assistant',
-        text:
-          'Leaf-photo analysis runs on Gemini vision and needs GEMINI_API_KEY configured on the ' +
-          'backend. Until then I can only read your text questions. AI suggestion — not a lab diagnosis.',
-        setup: true,
-      },
-    ]);
-  };
-
   const quick = QUICK[language] || QUICK.en;
 
   return (
@@ -287,8 +267,9 @@ const ChatPage: React.FC = () => {
               </div>
               <p className="font-display text-[15px] font-700">{t('howCanIHelp')}</p>
               <p className="mx-auto mt-1 max-w-[36ch] text-[12px] leading-relaxed text-ink-muted">
-                Ask about mandi prices, 14-day forecasts, which crop to sow, fertiliser or
-                government schemes. Prices come from the real mandi database.
+                Ask about mandi prices, weather, 14-day forecasts, which crop to sow,
+                fertiliser, irrigation or government schemes. Prices come from the real
+                mandi database.
               </p>
             </Card>
           )}
@@ -399,25 +380,6 @@ const ChatPage: React.FC = () => {
         {/* input bar */}
         <div className="sticky bottom-20 z-20 md:bottom-2">
           <div className="flex items-end gap-1.5 rounded-lg border border-border bg-surface p-1.5 shadow-md">
-            <button
-              type="button"
-              onClick={() => fileRef.current?.click()}
-              aria-label={t('attachPhoto')}
-              className="press grid h-10 w-10 shrink-0 place-items-center rounded-full text-ink-muted hover:bg-surface-2"
-            >
-              <Camera className="h-[18px] w-[18px]" strokeWidth={1.9} />
-            </button>
-            <input
-              ref={fileRef}
-              type="file"
-              accept="image/*"
-              className="hidden"
-              onChange={(e) => {
-                const f = e.target.files?.[0];
-                if (f) void onPhoto(f);
-                e.target.value = '';
-              }}
-            />
             <textarea
               value={input}
               onChange={(e) => setInput(e.target.value)}

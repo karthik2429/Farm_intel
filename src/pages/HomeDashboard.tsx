@@ -25,6 +25,7 @@ import {
   ProgressRing,
   Skeleton,
   StatTile,
+  shortDate,
 } from '@/components/ui-kit/core';
 import { CropThumb, PriceCard, type PriceData } from '@/components/ui-kit/PriceCard';
 import { useAuth } from '@/contexts/AuthContext';
@@ -105,6 +106,13 @@ const HomeDashboard: React.FC = () => {
               is_real: p.is_real,
               badge: p.badge,
               detail: p.detail,
+              // Provenance straight from the backend: the card must name the
+              // district actually quoted, not the farmer's, or a Davangere
+              // rate reads like a Kolar price.
+              resolvedDistrict: p.resolvedDistrict ?? null,
+              resolvedState: p.resolvedState ?? null,
+              scope: p.scope ?? null,
+              daysOld: p.daysOld ?? null,
             }
           : null;
         return { crop, price: data, spark };
@@ -313,7 +321,15 @@ const HomeDashboard: React.FC = () => {
                 {bestPrice.crop} · ₹{bestPrice.price!.price!.toLocaleString('en-IN')}/q
               </p>
               <p className="text-[11.5px] text-forest/75">
-                Highest of your crops in {loc.district || 'your district'} today
+                {(() => {
+                  const src = bestPrice.price!.resolvedDistrict;
+                  const date = bestPrice.price!.date;
+                  const where =
+                    src && loc.district && src.toLowerCase() !== loc.district.toLowerCase()
+                      ? `${src} mandi`
+                      : `${loc.district || 'your district'} mandi`;
+                  return `Highest of your crops at ${where}${date ? ` · ${shortDate(date)}` : ''}`;
+                })()}
               </p>
             </div>
             <button

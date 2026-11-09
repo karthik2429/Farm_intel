@@ -112,6 +112,52 @@ def test_unavailable_means_price_is_null(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# Scope: a district/state request must never borrow another state's market
+# ---------------------------------------------------------------------------
+
+def _no_live(monkeypatch):
+    """Keep the scope tests off the network and independent of API uptime."""
+    monkeypatch.setattr(mandi_prices, "_live_records", lambda *a, **k: [])
+
+
+def test_scoped_request_never_returns_another_state(monkeypatch):
+    """A Ranchi request must answer 'nothing', a labelled MSP, or a real
+    Jharkhand price — never a row from, say, Tamil Nadu. The AGMARKNET
+    monthly average is allowed because it is also Jharkhand's own price."""
+    _no_live(monkeypatch)
+    r = mandi_prices.get_price("Tomato", "Ranchi", "Jharkhand")
+    if r is None:
+        return
+    if r["source"] == "msp_reference":
+        assert r.get("is_real") is False
+        return
+    assert (r.get("state") or "").lower() == "jharkhand", \
+        f"scoped request served {r.get('source')} from {r.get('state')}"
+    assert r.get("scope") in ("district", "state")
+
+
+def test_scoped_price_stays_inside_the_state(monkeypatch):
+    _no_live(monkeypatch)
+    r = mandi_prices.get_price("Tomato", "Guntur", "Andhra Pradesh")
+    if r and r["source"] != "msp_reference":
+        assert (r.get("state") or "").lower() == "andhra pradesh"
+        assert r.get("scope") in ("district", "state")
+
+
+def test_unscoped_request_is_labelled_india(monkeypatch):
+    """All India is the only scope allowed to serve the national series."""
+    _no_live(monkeypatch)
+    r = mandi_prices.get_price("Tomato", None, None)
+    if r and r["source"] != "msp_reference":
+        assert r.get("scope") == "india"
+
+
+def test_store_lookup_can_refuse_the_national_fallback():
+    assert price_store.lookup("Tomato", "Ranchi", "Jharkhand",
+                               allow_any=False) == []
+
+
+# ---------------------------------------------------------------------------
 # price_forecast — trajectories must be usable statistics
 # ---------------------------------------------------------------------------
 

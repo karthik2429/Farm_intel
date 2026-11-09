@@ -9,6 +9,7 @@
  */
 import { useCallback, useEffect, useState } from 'react';
 import { supabase, supabaseConfigured } from '@/integrations/supabase/client';
+import { getDistricts } from '@/lib/indian-locations';
 import type { Language } from '@/lib/i18n';
 
 const CACHE_KEY = 'farmintel_profile';
@@ -185,4 +186,39 @@ export function defaultLocation(p: Profile | null) {
     lon: p?.lng ?? null,
     label: [p?.district, p?.state].filter(Boolean).join(', '),
   };
+}
+
+/**
+ * Synchronous read of the cached profile location.
+ *
+ * Pages that seed `useState` (form defaults, selected district) run before any
+ * effect can await Supabase, so they need the value immediately. This reads the
+ * same cache `useProfile` hydrates, which keeps one source of truth for
+ * "where is this farmer" instead of the old scattered `profile_*` keys.
+ */
+export function cachedLocation(): {
+  state: string;
+  district: string;
+  lat: number | null;
+  lon: number | null;
+  label: string;
+  hasProfile: boolean;
+} {
+  const p = readCachedProfile();
+  const state = p?.state && getDistricts(p.state).length ? p.state : '';
+  const district =
+    state && p?.district && getDistricts(state).includes(p.district) ? p.district : '';
+  return {
+    state,
+    district,
+    lat: p?.lat ?? null,
+    lon: p?.lng ?? null,
+    label: [district, state].filter(Boolean).join(', '),
+    hasProfile: Boolean(p?.onboarding_complete),
+  };
+}
+
+/** True once the farmer finished onboarding (cached read, no network). */
+export function hasCompletedOnboarding(): boolean {
+  return Boolean(readCachedProfile()?.onboarding_complete);
 }

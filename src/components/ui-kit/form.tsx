@@ -6,7 +6,7 @@
  * No plain white native input boxes anywhere.
  */
 import * as React from 'react';
-import { Check, ChevronDown, Minus, Plus } from 'lucide-react';
+import { Check, ChevronDown, Loader2, Minus, Plus } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 const fieldShell =
@@ -321,3 +321,62 @@ export function Toggle({
     </button>
   );
 }
+
+/* ---------------------------------------------------------------- Button -- */
+
+type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'gold';
+type ButtonSize = 'md' | 'lg' | 'sm';
+
+const buttonVariants: Record<ButtonVariant, string> = {
+  primary: 'text-white shadow-glow border border-transparent',
+  secondary: 'bg-surface border border-border text-ink shadow-sm hover:bg-surface-2',
+  ghost: 'bg-transparent border border-transparent text-ink hover:bg-surface-2',
+  gold: 'text-forest border border-harvest/30 shadow-md',
+};
+
+const buttonSizes: Record<ButtonSize, string> = {
+  sm: 'h-10 px-3 text-[13px] rounded-sm',
+  md: 'h-12 px-4 text-[14.5px] rounded-sm',
+  lg: 'h-14 px-5 text-[15.5px] rounded-md',
+};
+
+export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
+  variant?: ButtonVariant;
+  size?: ButtonSize;
+  loading?: boolean;
+  block?: boolean;
+}
+
+/**
+ * The one button in the app. Gradient primary, press scale, 44px+ targets.
+ * Renders a spinner in place of the icon slot while `loading`.
+ */
+export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
+  (
+    { variant = 'primary', size = 'md', loading, block, className, children, disabled, style, ...props },
+    ref,
+  ) => (
+    <button
+      ref={ref}
+      disabled={disabled || loading}
+      style={{
+        ...(variant === 'primary' ? { background: 'var(--grad-leaf)' } : null),
+        ...(variant === 'gold' ? { background: 'var(--grad-gold)' } : null),
+        ...style,
+      }}
+      className={cn(
+        'press inline-flex items-center justify-center gap-2 font-700 transition-all disabled:opacity-55 disabled:pointer-events-none',
+        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
+        buttonVariants[variant],
+        buttonSizes[size],
+        block && 'w-full',
+        className,
+      )}
+      {...props}
+    >
+      {loading && <Loader2 className="h-4 w-4 animate-spin" strokeWidth={2.2} />}
+      {children}
+    </button>
+  ),
+);
+Button.displayName = 'Button';

@@ -118,7 +118,34 @@ class Settings:
 
     @property
     def gemini_model(self) -> str:
-        return _s("GEMINI_MODEL", "gemini-2.0-flash")
+        return _s("GEMINI_MODEL", "gemini-3.5-flash")
+
+    @property
+    def gemini_models(self) -> List[str]:
+        """Gemini models to try in order when the first one is out of quota.
+
+        The free tier quota is per model, so an exhausted preview model used to
+        take the whole assistant down (HTTP 429 -> "temporarily unavailable").
+        GEMINI_MODEL stays the first choice; GEMINI_MODELS replaces the whole
+        list for anyone who wants a fixed chain.
+        """
+        chain = _l("GEMINI_MODELS")
+        if not chain:
+            chain = [
+                self.gemini_model,
+                "gemini-3.5-flash",
+                "gemini-3.5-flash-lite",
+                "gemini-flash-latest",
+                "gemini-flash-lite-latest",
+            ]
+        seen: set = set()
+        out: List[str] = []
+        for model in chain:
+            name = (model or "").strip()
+            if name and name not in seen:
+                seen.add(name)
+                out.append(name)
+        return out
 
     @property
     def groq_api_key(self) -> str:

@@ -1,5 +1,5 @@
 /**
- * Core UI kit primitives for AgroSmart AI.
+ * Core UI kit primitives for FarmIntel.
  *
  * These replace every "plain white box" in the app: cards, headers, stats,
  * badges, rings, sparklines, skeletons and empty states all share the design
@@ -141,6 +141,8 @@ const badgeLabels: Record<string, string> = {
   agmarknet_backfill: 'AGMARKNET',
   msp_reference: 'MSP ref',
   unavailable: 'Unavailable',
+  agmarknet_monthly: 'Monthly average',
+  monthly: 'Monthly average',
 };
 
 export function Badge({
@@ -182,24 +184,40 @@ export function PriceSourceBadge({
   source,
   isReal,
   updatedAt,
+  badge,
 }: {
   source?: string | null;
   isReal?: boolean | null;
   updatedAt?: string | null;
+  /** The backend's own verdict (live | cached | monthly | msp | unavailable).
+   *  When present it wins over guessing from the source string. */
+  badge?: string | null;
 }) {
   const key = (source || 'unavailable').toLowerCase();
-  if (key === 'unavailable' || !key) {
+  if (badge === 'unavailable' || key === 'unavailable' || !key) {
     return <Badge tone="unavailable">Unavailable</Badge>;
   }
-  if (key === 'msp_reference') {
+  if (badge === 'msp' || key === 'msp_reference') {
     return <Badge tone="info">MSP reference</Badge>;
   }
-  const isCached = key.startsWith('cache');
+  if (badge === 'monthly' || key.includes('monthly')) {
+    return <Badge tone="gold">Monthly average</Badge>;
+  }
+  if (badge === 'stale') {
+    return (
+      <Badge tone="neutral">
+        Older record{updatedAt ? ` · ${shortDate(updatedAt)}` : ''}
+      </Badge>
+    );
+  }
+  const isCached = badge ? badge === 'cached' : key.startsWith('cache');
   const label = isCached
     ? updatedAt
       ? `Cached · ${shortDate(updatedAt)}`
       : 'Cached'
-    : badgeLabels[key] || (isReal ? 'Live' : 'Market');
+    : badge === 'live'
+      ? 'Live'
+      : badgeLabels[key] || (isReal ? 'Live' : 'Market');
   return (
     <Badge tone={isCached ? 'cached' : 'live'} dot={!isCached}>
       {label}

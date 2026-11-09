@@ -1,0 +1,374 @@
+{
+  "base_url": "http://127.0.0.1:8100",
+  "runs": 5,
+  "endpoints": [
+    {
+      "label": "Health check",
+      "live": {
+        "runs": 5,
+        "p50_ms": 0.8,
+        "p95_ms": 0.8,
+        "max_ms": 1.0,
+        "mean_ms": 0.8,
+        "first_ms": 4.7
+      },
+      "offline": {
+        "runs": 5,
+        "p50_ms": 0.3,
+        "p95_ms": 0.4,
+        "max_ms": 0.6,
+        "mean_ms": 0.4,
+        "first_ms": 730.9
+      },
+      "external_ms": 0.5
+    },
+    {
+      "label": "Config status",
+      "live": {
+        "runs": 5,
+        "p50_ms": 0.7,
+        "p95_ms": 0.8,
+        "max_ms": 0.8,
+        "mean_ms": 0.7,
+        "first_ms": 1.0
+      },
+      "offline": {
+        "runs": 5,
+        "p50_ms": 0.3,
+        "p95_ms": 0.4,
+        "max_ms": 0.4,
+        "mean_ms": 0.3,
+        "first_ms": 0.5
+      },
+      "external_ms": 0.4
+    },
+    {
+      "label": "Market: latest price (store hit)",
+      "live": {
+        "runs": 5,
+        "p50_ms": 924.6,
+        "p95_ms": 986.8,
+        "max_ms": 5516.5,
+        "mean_ms": 1840.5,
+        "first_ms": 1119.6
+      },
+      "offline": {
+        "runs": 5,
+        "p50_ms": 9.7,
+        "p95_ms": 10.0,
+        "max_ms": 12.6,
+        "mean_ms": 10.2,
+        "first_ms": 11.7
+      },
+      "external_ms": 914.9
+    },
+    {
+      "label": "Market: price with no data (honest miss)",
+      "live": {
+        "runs": 5,
+        "p50_ms": 26.6,
+        "p95_ms": 28.6,
+        "max_ms": 49.8,
+        "mean_ms": 31.5,
+        "first_ms": 69.8
+      },
+      "offline": {
+        "runs": 5,
+        "p50_ms": 25.7,
+        "p95_ms": 25.9,
+        "max_ms": 31.2,
+        "mean_ms": 26.8,
+        "first_ms": 30.1
+      },
+      "external_ms": 0.9
+    },
+    {
+      "label": "Market: history chart",
+      "live": {
+        "runs": 5,
+        "p50_ms": 6.2,
+        "p95_ms": 6.7,
+        "max_ms": 7.4,
+        "mean_ms": 6.4,
+        "first_ms": 10.9
+      },
+      "offline": {
+        "runs": 5,
+        "p50_ms": 6.0,
+        "p95_ms": 6.3,
+        "max_ms": 6.6,
+        "mean_ms": 6.0,
+        "first_ms": 7.1
+      },
+      "external_ms": 0.2
+    },
+    {
+      "label": "Market: scoped crop catalogue",
+      "live": {
+        "runs": 5,
+        "p50_ms": 8.8,
+        "p95_ms": 9.1,
+        "max_ms": 9.2,
+        "mean_ms": 8.9,
+        "first_ms": 9.5
+      },
+      "offline": {
+        "runs": 5,
+        "p50_ms": 8.5,
+        "p95_ms": 9.1,
+        "max_ms": 10.0,
+        "mean_ms": 8.8,
+        "first_ms": 8.6
+      },
+      "external_ms": 0.3
+    },
+    {
+      "label": "Crop info (agronomy join)",
+      "live": {
+        "runs": 5,
+        "p50_ms": 2.1,
+        "p95_ms": 2.2,
+        "max_ms": 2.2,
+        "mean_ms": 2.1,
+        "first_ms": 11.5
+      },
+      "offline": {
+        "runs": 5,
+        "p50_ms": 1.5,
+        "p95_ms": 1.6,
+        "max_ms": 1.6,
+        "mean_ms": 1.5,
+        "first_ms": 8.5
+      },
+      "external_ms": 0.6
+    },
+    {
+      "label": "Crop recommendation (RandomForest)",
+      "live": {
+        "runs": 5,
+        "p50_ms": 26.8,
+        "p95_ms": 27.1,
+        "max_ms": 29.7,
+        "mean_ms": 27.2,
+        "first_ms": 1393.4
+      },
+      "offline": {
+        "runs": 5,
+        "p50_ms": 27.1,
+        "p95_ms": 27.1,
+        "max_ms": 27.2,
+        "mean_ms": 26.6,
+        "first_ms": 35.6
+      },
+      "external_ms": 0.0
+    },
+    {
+      "label": "Fertilizer recommendation",
+      "live": {
+        "runs": 5,
+        "p50_ms": 3.4,
+        "p95_ms": 3.6,
+        "max_ms": 3.8,
+        "mean_ms": 3.4,
+        "first_ms": 9.1
+      },
+      "offline": {
+        "runs": 5,
+        "p50_ms": 3.2,
+        "p95_ms": 3.7,
+        "max_ms": 3.7,
+        "mean_ms": 3.2,
+        "first_ms": 6.0
+      },
+      "external_ms": 0.2
+    },
+    {
+      "label": "Rotation suggestions",
+      "live": {
+        "runs": 5,
+        "p50_ms": 3.1,
+        "p95_ms": 3.5,
+        "max_ms": 3.6,
+        "mean_ms": 3.2,
+        "first_ms": 3.7
+      },
+      "offline": {
+        "runs": 5,
+        "p50_ms": 2.9,
+        "p95_ms": 3.2,
+        "max_ms": 3.3,
+        "mean_ms": 3.0,
+        "first_ms": 3.4
+      },
+      "external_ms": 0.2
+    },
+    {
+      "label": "Rotation 2-season plan",
+      "live": {
+        "runs": 5,
+        "p50_ms": 29.6,
+        "p95_ms": 29.6,
+        "max_ms": 29.9,
+        "mean_ms": 29.5,
+        "first_ms": 143.0
+      },
+      "offline": {
+        "runs": 5,
+        "p50_ms": 3.9,
+        "p95_ms": 3.9,
+        "max_ms": 3.9,
+        "mean_ms": 3.8,
+        "first_ms": 4.3
+      },
+      "external_ms": 25.7
+    },
+    {
+      "label": "Forecast 14-day (warm cache)",
+      "live": {
+        "runs": 5,
+        "p50_ms": 1.2,
+        "p95_ms": 1.3,
+        "max_ms": 1.3,
+        "mean_ms": 1.1,
+        "first_ms": 42.6
+      },
+      "offline": {
+        "runs": 5,
+        "p50_ms": 0.5,
+        "p95_ms": 0.6,
+        "max_ms": 0.7,
+        "mean_ms": 0.6,
+        "first_ms": 33.9
+      },
+      "external_ms": 0.7
+    },
+    {
+      "label": "Forecast single view (weather + factors)",
+      "live": {
+        "runs": 5,
+        "p50_ms": 19.6,
+        "p95_ms": 23.0,
+        "max_ms": 35.9,
+        "mean_ms": 23.0,
+        "first_ms": 651.0
+      },
+      "offline": {
+        "runs": 5,
+        "p50_ms": 17.3,
+        "p95_ms": 17.4,
+        "max_ms": 17.4,
+        "mean_ms": 17.2,
+        "first_ms": 18.5
+      },
+      "external_ms": 2.3
+    },
+    {
+      "label": "Price factors card",
+      "live": {
+        "runs": 5,
+        "p50_ms": 17.8,
+        "p95_ms": 17.9,
+        "max_ms": 17.9,
+        "mean_ms": 17.7,
+        "first_ms": 18.4
+      },
+      "offline": {
+        "runs": 5,
+        "p50_ms": 17.7,
+        "p95_ms": 21.6,
+        "max_ms": 24.1,
+        "mean_ms": 19.6,
+        "first_ms": 17.4
+      },
+      "external_ms": 0.1
+    },
+    {
+      "label": "Weather",
+      "live": {
+        "runs": 5,
+        "p50_ms": 0.7,
+        "p95_ms": 0.7,
+        "max_ms": 0.8,
+        "mean_ms": 0.7,
+        "first_ms": 1.1
+      },
+      "offline": {
+        "runs": 5,
+        "p50_ms": 0.4,
+        "p95_ms": 0.4,
+        "max_ms": 0.5,
+        "mean_ms": 0.4,
+        "first_ms": 0.8
+      },
+      "external_ms": 0.3
+    },
+    {
+      "label": "Chat: price question (deterministic)",
+      "live": {
+        "runs": 5,
+        "p50_ms": 0.9,
+        "p95_ms": 1.0,
+        "max_ms": 1.2,
+        "mean_ms": 0.9,
+        "first_ms": 33.6
+      },
+      "offline": {
+        "runs": 5,
+        "p50_ms": 0.4,
+        "p95_ms": 0.4,
+        "max_ms": 0.6,
+        "mean_ms": 0.4,
+        "first_ms": 33.2
+      },
+      "external_ms": 0.5
+    },
+    {
+      "label": "Chat: forecast question (deterministic)",
+      "live": {
+        "runs": 5,
+        "p50_ms": 0.9,
+        "p95_ms": 0.9,
+        "max_ms": 1.2,
+        "mean_ms": 1.0,
+        "first_ms": 73.8
+      },
+      "offline": {
+        "runs": 5,
+        "p50_ms": 0.5,
+        "p95_ms": 0.5,
+        "max_ms": 0.6,
+        "mean_ms": 0.5,
+        "first_ms": 72.9
+      },
+      "external_ms": 0.4
+    }
+  ],
+  "forecast": {
+    "scope": {
+      "state": "Goa",
+      "district": "North Goa",
+      "commodity": "Banana"
+    },
+    "forecast_cold": {
+      "runs": 5,
+      "p50_ms": 33.0,
+      "p95_ms": 33.1,
+      "max_ms": 33.9,
+      "mean_ms": 33.1
+    },
+    "forecast_warm": {
+      "runs": 5,
+      "p50_ms": 0.0,
+      "p95_ms": 0.0,
+      "max_ms": 0.0,
+      "mean_ms": 0.0
+    },
+    "history_query": {
+      "runs": 5,
+      "p50_ms": 7.2,
+      "p95_ms": 7.4,
+      "max_ms": 7.4,
+      "mean_ms": 7.2
+    }
+  }
+}

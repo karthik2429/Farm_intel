@@ -74,6 +74,14 @@ export interface PriceData {
   is_real?: boolean | null;
   badge?: string | null;
   detail?: string | null;
+  /** District the price really came from (backend widens district -> state -> India). */
+  resolvedDistrict?: string | null;
+  resolvedState?: string | null;
+  /** How far the search had to widen: district | state | india | msp. */
+  scope?: string | null;
+  /** Days since publication; 0 = today. Shown so an older quote is never
+   *  mistaken for today's rate. */
+  daysOld?: number | null;
 }
 
 function rangePct(d: PriceData): number | null {
@@ -101,6 +109,19 @@ export function PriceCard({
   const pct = rangePct(data);
   const hasPrice = data.price != null;
   const up = (deltaPct ?? 0) >= 0;
+  const isElsewhere = Boolean(
+    data.district &&
+      data.resolvedDistrict &&
+      data.district.trim().toLowerCase() !== data.resolvedDistrict.trim().toLowerCase(),
+  );
+  // Where the number really came from. "nearby" was wrong for a district on
+  // the other side of the state, so the label follows the backend's scope.
+  const scopeLabel =
+    data.scope === 'india'
+      ? 'outside your state'
+      : data.scope === 'state'
+        ? 'state-wide rate'
+        : 'other mandi';
 
   return (
     <div
@@ -144,11 +165,29 @@ export function PriceCard({
         <p className="mt-0.5 flex items-center gap-1 text-[11.5px] text-ink-muted">
           <MapPin className="h-3 w-3 shrink-0" strokeWidth={2} />
           <span className="truncate">
-            {[data.market || data.district || 'Market unknown', data.date ? shortDate(data.date) : '']
+            {[
+              // District first: when the backend widened the search, this is the
+              // one field that stops a Kerala rate looking like a Kolar rate.
+              data.resolvedDistrict || data.district || '',
+              data.market && data.market !== data.resolvedDistrict ? data.market : '',
+              data.date ? shortDate(data.date) : '',
+              // "not today" is normal for a mandi, so label the age instead of
+              // hiding the price.
+              data.daysOld && data.daysOld > 0
+                ? data.daysOld === 1
+                  ? 'yesterday'
+                  : `${data.daysOld}d old`
+                : '',
+            ]
               .filter(Boolean)
-              .join(' · ')}
+              .join(' · ') || 'Market unknown'}
           </span>
         </p>
+        {isElsewhere && (
+          <span className="mt-1 inline-flex items-center gap-1 rounded-full border border-harvest/40 bg-harvest/10 px-1.5 py-0 text-[9.5px] font-700 uppercase tracking-wide text-ink">
+            {scopeLabel}
+          </span>
+        )}
         {pct != null && (
           <div className="mt-2 h-1 w-full max-w-[280px] overflow-hidden rounded-full bg-surface-2">
             <span
@@ -185,7 +224,12 @@ export function PriceCard({
           </div>
         )}
         <div className="mt-1.5 flex justify-end">
-          <PriceSourceBadge source={data.source} isReal={data.is_real} updatedAt={data.date} />
+          <PriceSourceBadge
+            source={data.source}
+            isReal={data.is_real}
+            updatedAt={data.date}
+            badge={data.badge}
+          />
         </div>
       </div>
     </div>
