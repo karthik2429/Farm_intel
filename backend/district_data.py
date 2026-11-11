@@ -214,6 +214,140 @@ except Exception as e:  # noqa: BLE001
     print(f"[district_data] RF model load failed: {e}")
     ML_MODEL, ML_LE = None, None
 
+# District-trained suitability model (see train_crop_model.py). It scores
+# (district soil + climate + crop identity) -> probability the district grows
+# that crop in that season, trained on the shipped district table. Absent on a
+# checkout that has not run the trainer; the seven-feature model above then
+# remains the ML signal.
+try:
+    _bundle = joblib.load(os.path.join(MODELS_DIR, "crop_model.pkl"))
+    CROP_MODEL = _bundle if (isinstance(_bundle, dict)
+                             and _bundle.get("task") == "crop_suitability"
+                             and _bundle.get("model") is not None) else None
+except Exception as e:  # noqa: BLE001
+    print(f"[district_data] district crop model load failed: {e}")
+    CROP_MODEL = None
+
+
+def crop_model_info() -> Optional[dict]:
+    """Which ML signal /predict is using, and its measured accuracy.
+
+    Exposed through /model/status so the report's numbers are checkable from a
+    running server rather than only from the trainer's stdout.
+    """
+    if not CROP_MODEL:
+        return None
+    g = (CROP_MODEL.get("metrics") or {}).get(
+        CROP_MODEL.get("model_name"), {}).get("grouped_by_district", {})
+    return {
+        "model": CROP_MODEL.get("model_name"),
+        "trained_at": CROP_MODEL.get("trained_at"),
+        "crops": CROP_MODEL.get("crops"),
+        "districts": len(CROP_MODEL.get("districts") or {}),
+        "examples": CROP_MODEL.get("examples"),
+        "grouped_precision_at_3": g.get("precision_at_3"),
+        "grouped_recall_at_3": g.get("recall_at_3"),
+        "grouped_auc": g.get("auc"),
+        "baselines": CROP_MODEL.get("baselines"),
+    }
+
+
+def _suitability_inputs(loc: Optional[dict], season: str,
+                        temperature: float, humidity: float,
+                        rainfall: float) -> Optional[np.ndarray]:
+    """The district half of the suitability model's feature vector.
+
+    The trained table stores one soil/coordinate block per district (every
+    column is constant within a district), so a known district is looked up
+    and an unknown one falls back to its nearest known district - the same
+    ~120 km guard `resolve_district` uses for coordinates. Live weather wins
+    over the district's climatology, so a hot week moves the score.
+    """
+    if not CROP_MODEL or not loc:
+        return None
+    districts = CROP_MODEL.get("districts") or {}
+    if not districts:
+        return None
+
+    key = _alias(loc.get("district") or "") if loc.get("district") else ""
+    block = districts.get(key)
+    if block is None and loc.get("lat") is not None and loc.get("lon") is not None:
+        best, best_d = None, float("inf")
+        for name, cand in districts.items():
+            dd = ((cand["latitude"] - loc["lat"]) ** 2
+                  + (cand["longitude"] - loc["lon"]) ** 2)
+            if dd < best_d:
+                best, best_d = cand, dd
+        if best is not None and best_d < 1.5:
+            block = best
+    if block is None and loc.get("state"):
+        # No district match and no usable coordinates (the state-merge path):
+        # average the state's districts so the score still reflects the right
+        # soil and climate band instead of dropping to the climate-only model.
+        peers = [v for v in districts.values()
+                 if v.get("state") == _norm(loc["state"])]
+        if peers:
+            block = {k: float(np.mean([p[k] for p in peers]))
+                     for k in ("n_index", "p_index", "k_index", "ph_index",
+                               "oc_high", "oc_medium", "oc_low",
+                               "ec_nonsaline", "ec_saline",
+                               "latitude", "longitude")}
+            block["climate"] = {}
+    if block is None:
+        return None
+
+    season_key = "rabi" if _norm(season) == "rabi" else "kharif"
+    clim = (block.get("climate") or {}).get(season_key) or {}
+    dist_block = {
+        "n_index": block["n_index"], "p_index": block["p_index"],
+        "k_index": block["k_index"], "ph_index": block["ph_index"],
+        "oc_high": block["oc_high"], "oc_medium": block["oc_medium"],
+        "oc_low": block["oc_low"], "ec_nonsaline": block["ec_nonsaline"],
+        "ec_saline": block["ec_saline"],
+        "latitude": loc.get("lat") if loc.get("lat") is not None
+        else block["latitude"],
+        "longitude": loc.get("lon") if loc.get("lon") is not None
+        else block["longitude"],
+        "temp": temperature if temperature is not None
+        else clim.get("temp", 27.0),
+        "humidity": humidity if humidity is not None
+        else clim.get("humidity", 70.0),
+        "rainfall": rainfall if rainfall is not None
+        else clim.get("rainfall", 5.0),
+        "season_rabi": 1.0 if season_key == "rabi" else 0.0,
+    }
+    return np.array([dist_block[f] for f in CROP_MODEL["district_features"]],
+                    dtype=float)
+
+
+def _suitability_probs(loc: Optional[dict], season: str,
+                       temperature: float, humidity: float,
+                       rainfall: float,
+                       crop_names: List[str]) -> Dict[str, float]:
+    """P(this district grows this crop in this season) for each candidate."""
+    base = _suitability_inputs(loc, season, temperature, humidity, rainfall)
+    if base is None or not crop_names:
+        return {}
+    vocab = CROP_MODEL["crops"]
+    index = {c: i for i, c in enumerate(vocab)}
+    rows, names = [], []
+    for name in crop_names:
+        i = index.get(_norm(name))
+        if i is None:
+            continue
+        oh = np.zeros(len(vocab), dtype=float)
+        oh[i] = 1.0
+        rows.append(np.concatenate([base, oh]))
+        names.append(_norm(name))
+    if not rows:
+        return {}
+    try:
+        proba = CROP_MODEL["model"].predict_proba(np.vstack(rows))[:, 1]
+    except Exception as e:  # noqa: BLE001
+        print(f"[district_data] suitability predict failed: {e}")
+        return {}
+    return {n: float(p) for n, p in zip(names, proba)}
+
 # Friendly display names for the coarse government crop categories
 CATEGORY_DISPLAY = {
     "shree anna /nutri cereals": "Shree Anna (Millets)",
@@ -668,6 +802,13 @@ def _score_candidates(
         except Exception as e:  # noqa: BLE001
             print(f"[district_data] ML predict failed: {e}")
 
+    # District-trained suitability score, when the bundle is present. This is
+    # the ML signal the ranking prefers: it is conditioned on this district's
+    # soil survey and climate band, not just on the season's weather.
+    suit_probs = _suitability_probs(
+        loc, season, temperature, humidity, rainfall,
+        [c for c, _p in candidates])
+
     econ = economics or {}
     gross_values = [e["gross_return_per_ha"] for e in econ.values()
                     if e.get("gross_return_per_ha")]
@@ -679,7 +820,12 @@ def _score_candidates(
     results = []
     for crop_name, prior in candidates:
         ml_label = _ml_label(crop_name)
-        p_ml = float(ml_probs.get(ml_label, 0.0)) if ml_label else 0.0
+        p_climate = float(ml_probs.get(ml_label, 0.0)) if ml_label else 0.0
+        local = suit_probs.get(_norm(crop_name))
+        if local is not None:
+            p_ml, ml_source = float(local), "district"
+        else:
+            p_ml, ml_source = p_climate, ("climate" if ml_label else "none")
         h = hist.get(crop_name, {})
         yield_s = float(h.get("yield_score", 0) or 0)
         area_s = float(h.get("area_share", 0) or 0)
@@ -730,6 +876,7 @@ def _score_candidates(
             "raw_crop": crop_name,
             "ml_label": ml_label,
             "ml_prob": round(p_ml, 4),
+            "ml_source": ml_source,
             "hist_score": round(float(hist_score), 3),
             "soil_fit": round(float(soil_fit), 3),
             "climate_fit": round(float(climate_fit), 3),

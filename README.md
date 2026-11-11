@@ -165,6 +165,7 @@ Base URL `http://127.0.0.1:8000` — interactive docs at `/docs`.
 | Method | Path | What it returns |
 | --- | --- | --- |
 | GET | `/health` | Model, price engine and data readiness |
+| GET | `/model/crop` | Which crop model `/predict` serves, and its measured accuracy |
 | GET | `/config/status` | Which integrations are configured (never the values) |
 | POST | `/predict` | Crop ranking for soil + location |
 | POST | `/rotation/suggestions`, `/rotation/plan` | Rotation options and nutrient plan |
@@ -180,6 +181,36 @@ Base URL `http://127.0.0.1:8000` — interactive docs at `/docs`.
 | GET | `/predict/factors` | Season/weather/festival/supply factors |
 | GET | `/crop/info` | Agronomy metadata for a crop list |
 | GET | `/weather` | Current weather for a location |
+
+### Models
+
+`/predict` and `/fertilizer/recommend` are served by two trained models, both
+retrainable from the repo and both report their own measured accuracy.
+
+**Crop recommendation** — `models/crop_model.pkl`, trained on the 6,878-row
+district table (355 districts, 14 states: soil survey indices, organic carbon,
+salinity, coordinates, per-season climatology). Because every row of a
+district-season shares one feature vector and the label is a *set* of about
+five crops, the model is a suitability scorer — P(this district grows this crop
+in this season) — rather than a 13-way classifier, which is unlearnable on this
+table. With entire districts held out it scores **0.958 precision@3 / 0.974
+AUC**, against 0.897 for the nearest-district lookup and 0.683 for the national
+crop-frequency prior. It replaces the place-blind seven-column Kaggle
+RandomForest, which remains the fallback when the bundle is absent.
+
+**Fertiliser** — `models/fertilizer_model.pkl`, a RandomForest over the columns
+the endpoint actually has (N, P, K, pH, soil class, crop). It scores **0.794
+accuracy / 0.727 macro-F1** in 5-fold CV, against 0.561 top-1 for the cosine
+retrieval it replaced. A pH amendment now leads the answer (lime below 5.5,
+gypsum above 8.5), which the dataset's label set never produced.
+
+```bash
+.venv/bin/python backend/train_crop_model.py        # ~1 min; writes the bundle + report
+.venv/bin/python backend/train_fertilizer_model.py  # ~20 s
+```
+
+Full numbers, including the baselines and the columns deliberately left out:
+`reports/crop-model-report.md`, `reports/fertilizer-model-report.md`.
 
 ### ICAR fertiliser knowledge base
 

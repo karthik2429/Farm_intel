@@ -107,6 +107,9 @@ class RotationRequest(BaseModel):
     P: float
     K: float
     top_n: int = 5
+    # Optional: folds the district's own yield/area record into the ranking.
+    district: Optional[str] = None
+    state: Optional[str] = None
 
 
 class RotationPlanRequest(BaseModel):
@@ -287,6 +290,22 @@ async def health_check():
     }
 
 
+@app.get("/model/crop")
+async def crop_model_status():
+    """Which crop model /predict is serving, and how it scored.
+
+    The numbers come from `train_crop_model.py`, so the accuracy claimed in
+    reports/crop-model-report.md can be checked against a running server.
+    """
+    info = district_data.crop_model_info()
+    if not info:
+        raise HTTPException(
+            status_code=404,
+            detail="District crop model not trained - run train_crop_model.py. "
+                   "/predict is using the seven-feature RandomForest.")
+    return info
+
+
 @app.get("/config/status")
 async def config_status():
     """
@@ -392,7 +411,8 @@ async def predict_crop(request: CropRecommendRequest):
     # per hectare at the real mandi price. The crop page renders them instead
     # of asking the farmer to trust one number.
     factor_keys = (
-        "ml_prob", "soil_fit", "climate_fit", "season_fit", "hist_score",
+        "ml_prob", "ml_source", "soil_fit", "climate_fit", "season_fit",
+        "hist_score",
         "region_share", "locality", "market_score", "market_price",
         "price_commodity", "market_price_source", "market_price_date",
         "market_price_scope", "market_price_badge", "price_market",
@@ -423,10 +443,12 @@ async def predict_crop(request: CropRecommendRequest):
 
 @app.post("/rotation/suggestions")
 async def rotation_suggestions(request: RotationRequest):
-    """NPK-depletion based next-crop scoring (utils engine + master xlsx)."""
+    """Next-crop scoring: NPK fit, crop family, disease break and district
+    yield history (utils engine + master xlsx)."""
     try:
         result = get_rotation_suggestions(
-            request.prev_crop, request.N, request.P, request.K, request.top_n)
+            request.prev_crop, request.N, request.P, request.K, request.top_n,
+            district=request.district)
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=str(e))
     return result  # may contain "error" key; frontend toasts it
@@ -567,11 +589,29 @@ def _rule_based_fertilizer(crop: str, n: float, p: float, k: float,
     }
 
 
+def _ph_amendment(ph: float) -> Optional[dict]:
+    """Lime or gypsum when the soil reaction itself needs correcting.
+
+    Applied regardless of which crop fertiliser ranks first: an acid soil
+    locks up phosphorus, so adding more DAP before liming is money wasted.
+    """
+    if ph is not None and ph < 5.5:
+        return {"Fertilizer": "Lime", "Similarity": 0.9,
+                "Remark": (f"Soil is acidic (pH {ph}) - apply agricultural "
+                           "lime before sowing, then the NPK plan")}
+    if ph is not None and ph > 8.5:
+        return {"Fertilizer": "Gypsum", "Similarity": 0.9,
+                "Remark": (f"Soil is alkaline (pH {ph}) - apply gypsum to "
+                           "improve structure and nutrient availability")}
+    return None
+
+
 @app.post("/fertilizer/recommend")
 async def recommend_fertilizer(request: FertilizerRequest):
     """
-    Dataset cosine-similarity matching (fertilizer.ipynb logic) with a
-    transparent rule-based fallback for crops not in the dataset.
+    Trained classifier over the dataset's crop/soil/NPK/pH labels (see
+    train_fertilizer_model.py), with the pH amendment applied on top and a
+    transparent rule-based fallback for crops absent from the dataset.
     Response shape matches FertilizerRecommendationPage.
     """
     try:
@@ -606,9 +646,19 @@ async def recommend_fertilizer(request: FertilizerRequest):
     else:
         fertilizers = result["Fertilizer"].value_counts().head(3).index.tolist()
         top_matches = result[["Fertilizer", "Similarity", "Remark"]].head(5).to_dict("records")
+        # The dataset's label set has no pH amendment, so a pH 5.2 soil came
+        # back with DAP at 0.84 confidence and no mention of lime. The soil
+        # reaction is not a crop choice: amend it first, then feed the crop.
+        amendment = _ph_amendment(ph)
+        if amendment:
+            fertilizers = [amendment["Fertilizer"]] + [
+                f for f in fertilizers if f != amendment["Fertilizer"]]
+            top_matches = [amendment] + [
+                m for m in top_matches
+                if m["Fertilizer"] != amendment["Fertilizer"]]
         payload = {
-            "recommended_fertilizers": fertilizers,
-            "top_matches": top_matches,
+            "recommended_fertilizers": fertilizers[:3],
+            "top_matches": top_matches[:5],
             "soil_nutrients": {"N": round(float(n), 1), "P": round(float(p), 1),
                                "K": round(float(k), 1), "PH": round(float(ph), 1)},
             "crop": request.crop,

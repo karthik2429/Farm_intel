@@ -55,7 +55,11 @@ le = None
 district_crop_map = {}
 historical_lookup = {}
 try:
+    # BASE_DIR is backend/utils, so the shared artifacts live one level up.
+    # Without the '../models' candidate this module silently loaded nothing
+    # and every caller (rotation history, legacy full_system) saw empty maps.
     _model_dir = _first_existing(os.path.join(BASE_DIR, 'models'),
+                                 os.path.join(BASE_DIR, '..', 'models'),
                                  os.path.join(BASE_DIR, 'final_model'))
     model_path = os.path.join(_model_dir, 'rf_model.pkl')
     le_path = os.path.join(_model_dir, 'label_encoder.pkl')
@@ -112,6 +116,18 @@ except Exception:
     fertilizer_features = ["Nitrogen", "Phosphorous", "Potassium", "PH"]
     fertilizer_scaler = None
     fertilizer_scaled = None
+
+# Trained fertiliser classifier, when the repo has one (train_fertilizer_model.py)
+try:
+    _fert_model_dir = _first_existing(os.path.join(BASE_DIR, '..', 'models'),
+                                      os.path.join(BASE_DIR, 'models'))
+    _FERTILIZER_BUNDLE = joblib.load(
+        os.path.join(_fert_model_dir, 'fertilizer_model.pkl'))
+    if not (isinstance(_FERTILIZER_BUNDLE, dict)
+            and _FERTILIZER_BUNDLE.get('model') is not None):
+        _FERTILIZER_BUNDLE = None
+except Exception:
+    _FERTILIZER_BUNDLE = None
 
 # ------------------ LOCATION FALLBACKS ------------------
 DISTRICT_COORDS = {
@@ -356,10 +372,84 @@ def get_weather_forecast(lat, lon, days=14):
 
 # ------------------ CROP ROTATION ------------------
 
-def get_rotation_suggestions(prev_crop, N, P, K, top_n=3):
+def _rotation_name(name) -> str:
+    out = str(name).strip().lower()
+    for ch in ('\u2013', '\u2014', '-', '_', '(', ')', '.', ','):
+        out = out.replace(ch, ' ')
+    return ' '.join(out.split())
+
+
+# Master-xlsx crop names -> the names the district historical table uses.
+# Without this the district record is looked up under "Green Gram" while the
+# table stores it as "moong", and every history term silently reads zero.
+_HISTORY_ALIASES = {
+    "green gram": "moong", "moong": "moong", "mungbean": "moong",
+    "black gram": "urad", "urad": "urad", "blackgram": "urad",
+    "chickpea": "gram", "gram": "gram", "bengal gram": "gram",
+    "pigeon pea": "tur", "tur": "tur", "arhar": "tur",
+    "finger millet": "ragi", "ragi": "ragi",
+    "pearl millet": "bajra", "bajra": "bajra",
+    "sorghum": "jowar", "jowar": "jowar",
+    "paddy": "rice", "rice": "rice",
+    "lentil": "lentil", "masoor": "lentil",
+    "small millets": "small millets", "millet": "bajra",
+    "mustard": "mustard", "soybean": "soybean",
+}
+
+
+def _district_crop_history(district, crop_name) -> dict:
+    """How well this district already grows a crop, across its seasons.
+
+    A rotation that asks a farmer to plant something their district has no
+    record of growing is a worse suggestion than one built on a crop the
+    district already harvests well, so the yield/area record is folded into
+    the score. Absent district (or no historical rows) contributes nothing.
     """
-    Given the previous crop and current soil NPK, returns ranked
-    suggestions for the next crop to plant.
+    if not district or not historical_lookup:
+        return {"yield_score": 0.0, "area_share": 0.0}
+    wanted = _rotation_name(district)
+    rows = historical_lookup.get(wanted)
+    if rows is None:
+        for key, value in historical_lookup.items():
+            if _rotation_name(key) == wanted:
+                rows = value
+                break
+    if not rows:
+        return {"yield_score": 0.0, "area_share": 0.0}
+    norm = _rotation_name(crop_name)
+    targets = {norm, _HISTORY_ALIASES.get(norm, norm)}
+    yields, areas = [], []
+    for _season, crops in (rows or {}).items():
+        for name, stats in (crops or {}).items():
+            if _rotation_name(name) in targets:
+                yields.append(float(stats.get("yield_score") or 0.0))
+                areas.append(float(stats.get("area_share") or 0.0))
+    if not yields:
+        return {"yield_score": 0.0, "area_share": 0.0}
+    return {
+        "yield_score": max(yields),
+        "area_share": max(areas),
+    }
+
+
+def get_rotation_suggestions(prev_crop, N, P, K, top_n=3, district=None):
+    """
+    Given the previous crop and current soil NPK, rank the next crop.
+
+    Scoring is the NPK-fit cosine plus the things that actually decide a
+    rotation and that the cosine alone ignored:
+
+        cos            similarity of the depleted soil to the crop's ideal NPK
+        history        this district's own yield/area record for the crop
+        n_fix_bonus    legume after a nitrogen-hungry cereal, or when N is low
+        same_family    penalty: same botanical family back-to-back shares soil
+                       -borne pathogens and pests
+        avoid_after    penalty: the master table says this crop performs badly
+                       straight after the previous one
+
+    Penalties are what stop gram-after-gram: the two are the same family, so
+    their NPK profiles are close and the old cosine score actively preferred
+    the repetition.
     """
 
     if crop_rotation_df.empty:
@@ -375,6 +465,9 @@ def get_rotation_suggestions(prev_crop, N, P, K, top_n=3):
         return {"error": f"Crop '{prev_crop}' not found. Available: {available}"}
 
     row = match.iloc[0]
+    prev_family = _rotation_name(row['family'])
+    prev_name = _rotation_name(row['crop'])
+    prev_is_cereal = 'cereal' in prev_family
 
     # 2. Compute depleted soil
     N_after = max(0, N - row['N_loss'])
@@ -407,11 +500,33 @@ def get_rotation_suggestions(prev_crop, N, P, K, top_n=3):
                 ideal.reshape(1, -1)
             )[0][0]
 
-        # Nitrogen-fixing bonus (+0.05 if N is low after harvest)
         n_fix = cand_row['nitrogen_fixing'] == 'Yes'
         n_fix_bonus = 0.05 if (n_fix and N_after < 40) else 0.0
+        # A legume after any cereal earns a break bonus even when N is not yet
+        # depleted: that is the rotation every agronomy guide recommends.
+        break_bonus = 0.08 if (n_fix and prev_is_cereal) else 0.0
 
-        final_score = cos_score + n_fix_bonus
+        cand_family = _rotation_name(cand_row['family'])
+        same_family = bool(cand_family) and cand_family == prev_family
+        family_penalty = 0.15 if same_family else 0.0
+
+        avoid_list = [
+            _rotation_name(a) for a in
+            str(cand_row.get('avoid_after') or '').replace(';', ',').split(',')
+            if _rotation_name(a)
+        ]
+        avoids_prev = prev_name in avoid_list
+        avoid_penalty = 0.30 if avoids_prev else 0.0
+
+        hist = _district_crop_history(district, cand_row['crop'])
+        history_score = min(
+            1.0, 0.6 * float(hist['yield_score']) + 0.4 * min(
+                1.0, float(hist['area_share']) / 0.15))
+
+        final_score = (0.62 * cos_score + 0.18 * history_score
+                       + n_fix_bonus + break_bonus
+                       - family_penalty - avoid_penalty)
+        final_score = float(np.clip(final_score, 0.0, 1.0))
 
         # Nutrient gap (how much fertiliser needed)
         n_gap = max(0, ideal[0] - N_after)
@@ -423,7 +538,11 @@ def get_rotation_suggestions(prev_crop, N, P, K, top_n=3):
             'family': cand_row['family'],
             'season': cand_row['season'],
             'cosine_score': float(round(cos_score, 4)),
-            'n_fix_bonus': float(round(n_fix_bonus, 4)),
+            'n_fix_bonus': float(round(n_fix_bonus + break_bonus, 4)),
+            'history_score': float(round(history_score, 4)),
+            'same_family': same_family,
+            'avoids_previous': avoids_prev,
+            'penalty': float(round(family_penalty + avoid_penalty, 4)),
             'final_score': float(round(final_score, 4)),
             'nitrogen_fixing': n_fix,
             'N_gap': float(round(n_gap, 1)),
@@ -444,6 +563,11 @@ def get_rotation_suggestions(prev_crop, N, P, K, top_n=3):
         warnings_list.append("Phosphorus very low — add DAP/SSP before next sowing")
     if K_after < 10:
         warnings_list.append("Potassium low — apply MOP before next season")
+    if results and results[0].get('same_family'):
+        warnings_list.append(
+            f"Every listed option is in the {row['family']} family: sowing "
+            "the same family repeatedly builds up soil-borne disease and "
+            "pests. Consider a break crop if one suits your season.")
 
     return {
         'season1_crop': row['crop'],
@@ -483,7 +607,8 @@ def plan_two_season_rotation(
         ph = ph if ph is not None else location_data.get("ph", 6.5)
 
     # Season 2
-    result_s2 = get_rotation_suggestions(season1_crop, N, P, K, top_n=top_n)
+    result_s2 = get_rotation_suggestions(season1_crop, N, P, K, top_n=top_n,
+                                         district=district)
     if 'error' in result_s2:
         return {"error": result_s2['error']}
 
@@ -494,7 +619,7 @@ def plan_two_season_rotation(
     result_s3 = get_rotation_suggestions(
         best_s2['crop'],
         s2_soil['N'], s2_soil['P'], s2_soil['K'],
-        top_n=2
+        top_n=2, district=district
     )
 
     s3_name = result_s3['suggestions'][0]['crop'] if result_s3.get('suggestions') else 'TBD'
@@ -514,8 +639,25 @@ def plan_two_season_rotation(
 # ------------------ FERTILIZER RECOMMENDATION ------------------
 
 def recommend_fertilizer(crop, soil, n, p, k, ph, top_k=5):
+    """Ranked fertilisers for this crop, soil and soil test.
+
+    Uses the trained classifier in `models/fertilizer_model.pkl` when present
+    (see train_fertilizer_model.py). It reads the columns the endpoint can
+    actually supply - N, P, K, pH, soil class, crop - and beats the cosine
+    retrieval it replaces by a wide margin (0.79 vs 0.56 accuracy on the
+    shipped dataset). The old retrieval stays as the fallback so a checkout
+    without the bundle keeps working.
+
+    Returns a DataFrame with Fertilizer / Similarity / Remark columns, which is
+    the shape the endpoint and the page already use.
+    """
     crop = crop.lower()
     soil = soil.lower()
+
+    if _FERTILIZER_BUNDLE:
+        rows = _fertilizer_model_rows(crop, soil, n, p, k, ph, top_k)
+        if rows is not None:
+            return rows
 
     crop_df = fertilizer_df[fertilizer_df["Crop"] == crop]
 
@@ -535,6 +677,45 @@ def recommend_fertilizer(crop, soil, n, p, k, ph, top_k=5):
     result = crop_df.sort_values(by="Similarity", ascending=False)
 
     return result.head(top_k)
+
+
+def _fertilizer_model_rows(crop, soil, n, p, k, ph, top_k):
+    """Classifier path: probability-ranked fertilisers, dataset remarks.
+
+    `Similarity` is now the model's probability for that fertiliser rather
+    than a cosine against the nearest row, so it is comparable across crops
+    and it is what the ranking is actually based on. Rows keep the dataset's
+    Remark text because that sentence is what the page shows.
+    """
+    bundle = _FERTILIZER_BUNDLE
+    if crop not in bundle["crops"]:
+        return None
+    try:
+        soils = bundle["soils"]
+        crops = bundle["crops"]
+        soil_vec = [1.0 if soil == s else 0.0 for s in soils]
+        if not any(soil_vec):
+            # Unseen spelling ("black"/"red"): let the dataset's own soil
+            # classes stay neutral rather than silently picking the first.
+            soil_vec = [0.0] * len(soils)
+        crop_vec = [1.0 if crop == c else 0.0 for c in crops]
+        row = np.array([[float(n), float(p), float(k), float(ph)]
+                        + soil_vec + crop_vec])
+        proba = bundle["model"].predict_proba(row)[0]
+    except Exception as e:  # noqa: BLE001
+        print(f"[fertilizer] model path failed: {e}")
+        return None
+
+    order = np.argsort(proba)[::-1][:max(top_k, 1)]
+    out = []
+    for i in order:
+        name = bundle["classes"][i]
+        out.append({
+            "Fertilizer": name,
+            "Similarity": round(float(proba[i]), 4),
+            "Remark": bundle["remarks"].get(name, ""),
+        })
+    return pd.DataFrame(out)
 
 # ------------------ MAIN SYSTEM (Crop Recommendation) ------------------
 
