@@ -432,7 +432,74 @@ def _district_crop_history(district, crop_name) -> dict:
     }
 
 
-def get_rotation_suggestions(prev_crop, N, P, K, top_n=3, district=None):
+_DISTRICT_CROPS_CACHE = {}
+
+
+def _district_crop_sets(district, state=None):
+    """(crops this district grows, crops its state grows) in master naming.
+
+    The master table's rotation candidates are agronomic, not local: mustard
+    after rice is textbook, but recommending it in Kolar asks a farmer to grow
+    something the district has no record of. The crop map answers what is
+    actually grown, so the ranking can be held to it.
+
+    Both sets are returned already translated to the master table's names
+    ("moong" -> "green gram"), because that is what the candidates are called.
+    """
+    if not district and not state:
+        return set(), set()
+    key = (_rotation_name(district or ""), _rotation_name(state or ""))
+    if key in _DISTRICT_CROPS_CACHE:
+        return _DISTRICT_CROPS_CACHE[key]
+
+    local, state_wide = set(), set()
+    try:
+        import district_data as dd
+
+        loc = dd.resolve_district(district, state) if district else None
+        name = (loc or {}).get("district")
+        # A district the soil survey does not cover (Kollam, Karnal) resolves
+        # to nothing offline, so the caller's state is the only locality left.
+        state = ((loc or {}).get("state") or _rotation_name(state or "")).lower()
+        if name:
+            for crops in (dd.DISTRICT_CROP_MAP.get(name) or {}).values():
+                for c in (crops or []):
+                    cc = _rotation_name(c)
+                    if cc in dd._AGGREGATE_CATEGORIES:
+                        continue
+                    local.add(_HISTORY_ALIASES.get(cc, cc))
+        if state:
+            for dname, seasons in dd.DISTRICT_CROP_MAP.items():
+                profs = dd.SOIL_PROFILE_INDEX.get(dname) or []
+                if not profs or (profs[0].get("state") or "") != state:
+                    continue
+                for crops in (seasons or {}).values():
+                    for c in (crops or []):
+                        cc = _rotation_name(c)
+                        if cc in dd._AGGREGATE_CATEGORIES:
+                            continue
+                        state_wide.add(_HISTORY_ALIASES.get(cc, cc))
+        # States the government crop map does not track (Kerala, Tamil Nadu,
+        # Gujarat, Haryana, West Bengal, Odisha) still have a curated list of
+        # what is grown there; without it those districts fall straight through
+        # to the unconstrained agronomic ranking.
+        if state and not state_wide:
+            for crops in (dd._STATE_FALLBACK_CROPS.get(state) or {}).values():
+                for c in (crops or []):
+                    cc = _rotation_name(c)
+                    if cc in dd._AGGREGATE_CATEGORIES:
+                        continue
+                    state_wide.add(_HISTORY_ALIASES.get(cc, cc))
+    except Exception as e:  # noqa: BLE001
+        print(f"[rotation] district crop sets unavailable: {e}")
+
+    state_wide |= local
+    _DISTRICT_CROPS_CACHE[key] = (local, state_wide)
+    return local, state_wide
+
+
+def get_rotation_suggestions(prev_crop, N, P, K, top_n=3, district=None,
+                            state=None):
     """
     Given the previous crop and current soil NPK, rank the next crop.
 
@@ -450,6 +517,14 @@ def get_rotation_suggestions(prev_crop, N, P, K, top_n=3, district=None):
     Penalties are what stop gram-after-gram: the two are the same family, so
     their NPK profiles are close and the old cosine score actively preferred
     the repetition.
+
+    Finally the list is gated on what the district actually grows, because the
+    master table's candidates are agronomic rather than local. Only crops in
+    the district's crop map are offered; if the district has no record for any
+    candidate, the state's crops are used, and only if those are empty too does
+    the unconstrained agronomic ranking stand. Whichever basis was used is
+    reported in `district_gate`, and every option carries `district_grown` /
+    `state_grown`, so the page can say why a crop is or is not offered.
     """
 
     if crop_rotation_df.empty:
@@ -478,6 +553,7 @@ def get_rotation_suggestions(prev_crop, N, P, K, top_n=3, district=None):
 
     # 3. Get candidate next crops
     candidates = [c.strip() for c in str(row['best_next_crops']).split(';')]
+    district_crops, state_crops = _district_crop_sets(district, state)
 
     # 4. Score each candidate
     results = []
@@ -533,10 +609,14 @@ def get_rotation_suggestions(prev_crop, N, P, K, top_n=3, district=None):
         p_gap = max(0, ideal[1] - P_after)
         k_gap = max(0, ideal[2] - K_after)
 
+        cand_key = _HISTORY_ALIASES.get(_rotation_name(cand_row['crop']),
+                                        _rotation_name(cand_row['crop']))
         results.append({
             'crop': cand_row['crop'],
             'family': cand_row['family'],
             'season': cand_row['season'],
+            'district_grown': cand_key in district_crops,
+            'state_grown': cand_key in state_crops,
             'cosine_score': float(round(cos_score, 4)),
             'n_fix_bonus': float(round(n_fix_bonus + break_bonus, 4)),
             'history_score': float(round(history_score, 4)),
@@ -555,7 +635,35 @@ def get_rotation_suggestions(prev_crop, N, P, K, top_n=3, district=None):
 
     results.sort(key=lambda x: x['final_score'], reverse=True)
 
-    # 5. Warnings
+    # 5. Gate on district fit. The agronomic ranking stays intact in
+    # `all_candidates`; `suggestions` only offers crops this district grows.
+    gate = {'applied': False, 'district': district, 'basis': 'agronomic',
+            'excluded': [], 'note': ''}
+    if results and district:
+        local = [r for r in results if r['district_grown']]
+        state_only = [r for r in results if r['state_grown'] and not r['district_grown']]
+        if local:
+            eligible, basis = local, 'district'
+            gate['note'] = ('Only crops this district grows are shown, ranked '
+                            'by soil fit and its own yield record.')
+        elif state_only:
+            eligible, basis = state_only, 'state'
+            gate['note'] = ('No district crop record covers these options, so '
+                            'crops grown elsewhere in the state are shown.')
+        else:
+            eligible, basis = results, 'agronomic'
+            gate['note'] = ('Neither the district nor the state has a record of '
+                            'these crops - showing the agronomic ranking alone.')
+        gate['applied'] = basis != 'agronomic'
+        gate['basis'] = basis
+        gate['excluded'] = [r['crop'] for r in results if r not in eligible]
+        suggestions = eligible
+    else:
+        suggestions = results
+        gate['note'] = ('Choose a district to filter out crops it does not '
+                        'grow.')
+
+    # 6. Warnings
     warnings_list = []
     if N_after < 20:
         warnings_list.append("Nitrogen critically low — prioritise nitrogen-fixing crop or add urea")
@@ -563,16 +671,21 @@ def get_rotation_suggestions(prev_crop, N, P, K, top_n=3, district=None):
         warnings_list.append("Phosphorus very low — add DAP/SSP before next sowing")
     if K_after < 10:
         warnings_list.append("Potassium low — apply MOP before next season")
-    if results and results[0].get('same_family'):
+    if suggestions and suggestions[0].get('same_family'):
         warnings_list.append(
             f"Every listed option is in the {row['family']} family: sowing "
             "the same family repeatedly builds up soil-borne disease and "
             "pests. Consider a break crop if one suits your season.")
+    if suggestions and all(s.get('avoids_previous') for s in suggestions):
+        warnings_list.append(
+            f"Every option for {row['crop']} is flagged as a poor follow-on "
+            "crop. Widen to a different family if your season allows.")
 
     return {
         'season1_crop': row['crop'],
         'depleted_soil': {'N': float(N_after), 'P': float(P_after), 'K': float(K_after)},
-        'suggestions': results[:top_n],
+        'suggestions': suggestions[:top_n],
+        'district_gate': gate,
         'warnings': warnings_list,
         'all_candidates': results
     }
@@ -587,6 +700,7 @@ def plan_two_season_rotation(
     lat=None,
     lon=None,
     district=None,
+    state=None,
     mode="auto",
     top_n=3
 ):
@@ -608,7 +722,7 @@ def plan_two_season_rotation(
 
     # Season 2
     result_s2 = get_rotation_suggestions(season1_crop, N, P, K, top_n=top_n,
-                                         district=district)
+                                         district=district, state=state)
     if 'error' in result_s2:
         return {"error": result_s2['error']}
 
@@ -619,7 +733,7 @@ def plan_two_season_rotation(
     result_s3 = get_rotation_suggestions(
         best_s2['crop'],
         s2_soil['N'], s2_soil['P'], s2_soil['K'],
-        top_n=2, district=district
+        top_n=2, district=district, state=state
     )
 
     s3_name = result_s3['suggestions'][0]['crop'] if result_s3.get('suggestions') else 'TBD'
@@ -632,6 +746,9 @@ def plan_two_season_rotation(
         'season3_preview': s3_name,
         'soil_after_s1': {k: float(v) for k, v in s2_soil.items()},
         'soil_after_s2': {k: float(v) for k, v in s3_soil.items()},
+        # Which locality basis the season-2 list was held to, plus the crops it
+        # dropped, so the page can explain the list instead of just showing it.
+        'district_gate': result_s2.get('district_gate'),
         'warnings': result_s2['warnings'],
         'input_npk': {k: float(v) for k, v in {'N': N, 'P': P, 'K': K, 'ph': ph}.items()}
     }

@@ -448,7 +448,7 @@ async def rotation_suggestions(request: RotationRequest):
     try:
         result = get_rotation_suggestions(
             request.prev_crop, request.N, request.P, request.K, request.top_n,
-            district=request.district)
+            district=request.district, state=request.state)
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=str(e))
     return result  # may contain "error" key; frontend toasts it
@@ -468,6 +468,7 @@ async def rotation_plan(request: RotationPlanRequest):
             N=request.N, P=request.P, K=request.K, ph=request.ph,
             lat=lat, lon=lon,
             district=(request.district or "").strip().lower() or None,
+            state=request.state,
             mode="coords" if (lat is not None and lon is not None) else "auto",
             top_n=request.top_n or 3,
         )

@@ -149,6 +149,48 @@ def test_district_history_enters_the_ranking(rotation):
     assert moved, "district history was computed but never changed a score"
 
 
+def test_rotation_gates_out_crops_the_district_does_not_grow(rotation):
+    """Mustard after rice is textbook agronomy, but Kolar has no mustard."""
+    result = rotation("Rice", 90, 40, 40, top_n=3, district="kolar",
+                      state="Karnataka")
+    names = [s["crop"] for s in result["suggestions"]]
+    assert "Mustard" not in names
+    assert all(s["district_grown"] for s in result["suggestions"])
+    assert "Mustard" in result["district_gate"]["excluded"]
+    # The agronomic ranking is still reported for anyone who wants it.
+    assert "Mustard" in [c["crop"] for c in result["all_candidates"]]
+
+
+def test_gate_reports_which_basis_it_used(rotation):
+    local = rotation("Rice", 90, 40, 40, top_n=3, district="kolar",
+                     state="Karnataka")
+    assert local["district_gate"]["basis"] == "district"
+    assert local["district_gate"]["applied"] is True
+    assert local["district_gate"]["note"]
+
+    # Kerala has no district crop map entry, so the state fallback answers.
+    state = rotation("Rice", 90, 40, 40, top_n=3, district="kollam",
+                     state="Kerala")
+    assert state["district_gate"]["basis"] == "state"
+    assert "Mustard" in state["district_gate"]["excluded"]
+
+    bare = rotation("Rice", 90, 40, 40, top_n=3)
+    assert bare["district_gate"]["basis"] == "agronomic"
+    assert bare["district_gate"]["applied"] is False
+
+
+def test_gate_never_empties_the_answer(rotation):
+    """A gate that leaves nothing is worse than no gate."""
+    from utils.utils import crop_rotation_df
+
+    for crop in crop_rotation_df["crop"].tolist():
+        result = rotation(crop, 90, 40, 40, top_n=3, district="kolar",
+                          state="Karnataka")
+        if "error" in result:
+            continue
+        assert result["suggestions"], f"{crop} produced no suggestion at all"
+
+
 def test_rotation_endpoint_accepts_a_district(client):
     r = client.post("/rotation/suggestions", json={
         "prev_crop": "Rice", "N": 90, "P": 40, "K": 40,
@@ -158,6 +200,8 @@ def test_rotation_endpoint_accepts_a_district(client):
     assert body["suggestions"]
     assert "history_score" in body["suggestions"][0]
     assert "same_family" in body["suggestions"][0]
+    assert body["district_gate"]["basis"] == "district"
+    assert all(s["district_grown"] for s in body["suggestions"])
 
 
 # ─────────────────────── fertiliser model ────────────────────────────────

@@ -212,6 +212,19 @@ gypsum above 8.5), which the dataset's label set never produced.
 Full numbers, including the baselines and the columns deliberately left out:
 `reports/crop-model-report.md`, `reports/fertilizer-model-report.md`.
 
+### Rotation scoring
+
+Next crops are ranked on soil fit after the harvest (NPK cosine), the
+district's own yield record, a legume-after-cereal break bonus, and two
+penalties: same botanical family back to back (shared soil-borne pests) and
+crops the master table flags as a poor follow-on. The list is then gated on
+what the district actually grows — the master table's candidates are agronomic,
+so mustard after rice was being offered in Kolar, which grows no mustard. If no
+candidate is grown in the district the state's crops are used, and only if
+those are empty does the unconstrained ranking stand. The response reports the
+basis in `district_gate` (with the crops it hid) and marks each option
+`district_grown` / `state_grown`, so the page can say why a crop is offered.
+
 ### ICAR fertiliser knowledge base
 
 Nine ICAR documents (fertiliser dose calculator manual, soil and nutrient

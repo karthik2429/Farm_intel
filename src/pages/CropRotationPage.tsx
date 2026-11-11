@@ -23,13 +23,28 @@ interface SeasonOption {
   family?: string;
   season?: string;
   final_score?: number;
+  cosine_score?: number;
+  history_score?: number;
   nitrogen_fixing?: boolean;
+  same_family?: boolean;
+  avoids_previous?: boolean;
+  penalty?: number;
+  district_grown?: boolean;
+  state_grown?: boolean;
   N_gap?: number;
   P_gap?: number;
   K_gap?: number;
   soil_type?: string;
   ph_range?: string;
   temp_range?: string;
+}
+
+interface DistrictGate {
+  applied?: boolean;
+  district?: string | null;
+  basis?: 'district' | 'state' | 'agronomic';
+  excluded?: string[];
+  note?: string;
 }
 
 interface PlanResponse {
@@ -39,6 +54,7 @@ interface PlanResponse {
   season3_preview?: string;
   soil_after_s1?: Record<string, number>;
   soil_after_s2?: Record<string, number>;
+  district_gate?: DistrictGate;
   warnings?: string[];
   input_npk?: Record<string, number>;
   error?: string;
@@ -228,6 +244,14 @@ const CropRotationPage: React.FC = () => {
                 <p className="px-1 text-[11px] font-700 uppercase tracking-[0.08em] text-ink-muted">
                   Best next crops
                 </p>
+                {result.district_gate?.note ? (
+                  <p className="px-1 -mt-1 text-[11px] leading-snug text-ink-muted">
+                    {result.district_gate.note}
+                    {result.district_gate.excluded?.length ? (
+                      <> Hidden: {result.district_gate.excluded.join(', ')}.</>
+                    ) : null}
+                  </p>
+                ) : null}
                 {result.season2_options.map((opt) => (
                   <Card key={opt.crop} className="flex items-start gap-3">
                     <CropThumb crop={opt.crop} size={48} />
@@ -235,6 +259,10 @@ const CropRotationPage: React.FC = () => {
                       <div className="flex flex-wrap items-center gap-1.5">
                         <p className="font-display text-[14.5px] font-800 text-ink">{opt.crop}</p>
                         {opt.nitrogen_fixing && <Badge tone="live">fixes nitrogen</Badge>}
+                        {opt.same_family && <Badge tone="danger">same family</Badge>}
+                        {opt.avoids_previous && (
+                          <Badge tone="danger">poor after {result.season1 || prevCrop}</Badge>
+                        )}
                         {pct(opt.final_score) != null && (
                           <Badge tone="neutral">{pct(opt.final_score)}% match</Badge>
                         )}
@@ -242,6 +270,7 @@ const CropRotationPage: React.FC = () => {
                       <p className="mt-0.5 text-[11.5px] text-ink-muted">
                         {[opt.family, opt.season, opt.soil_type].filter(Boolean).join(' · ') || '—'}
                       </p>
+                      <OptionReasons opt={opt} prev={result.season1 || prevCrop} />
                       <div className="mt-1.5 flex flex-wrap gap-1.5">
                         <NutrientChip label="N top-up" value={opt.N_gap} />
                         <NutrientChip label="P top-up" value={opt.P_gap} />
@@ -292,6 +321,42 @@ function Stage({ label, crop, muted }: { label: string; crop: string; muted?: bo
       <p className="text-[9.5px] font-700 uppercase tracking-wide text-ink-muted">{label}</p>
       <p className="font-display text-[13px] font-800 text-ink">{crop}</p>
     </div>
+  );
+}
+
+/**
+ * Why this crop is on the list, and what counted against it.
+ *
+ * The ranking blends a soil-fit score, the district's own yield record and two
+ * penalties. Showing only a percentage made the order look arbitrary — a crop
+ * demoted for sharing the previous crop's family read as a worse soil match.
+ */
+function OptionReasons({ opt, prev }: { opt: SeasonOption; prev?: string }) {
+  const reasons: string[] = [];
+  if (opt.district_grown) {
+    reasons.push('Grown in your district');
+  } else if (opt.state_grown) {
+    reasons.push('Grown in your state, but not recorded in this district');
+  } else {
+    reasons.push('No local crop record for it');
+  }
+  if (opt.same_family) {
+    reasons.push("Same plant family as the crop you harvested — sharing soil-borne pests and disease");
+  }
+  if (opt.avoids_previous && prev) {
+    reasons.push(`The crop table flags it as a weak follow-on to ${prev}`);
+  }
+  if (typeof opt.history_score === 'number' && opt.history_score > 0) {
+    reasons.push('Your district already yields it well');
+  }
+  return (
+    <ul className="mt-1 space-y-0.5">
+      {reasons.map((r) => (
+        <li key={r} className="text-[11px] leading-snug text-ink-muted">
+          · {r}
+        </li>
+      ))}
+    </ul>
   );
 }
 
