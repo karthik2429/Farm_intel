@@ -80,6 +80,44 @@ _NAME_GROUPS = [
     {"darjeeling", "darjiling"},
     {"purba medinipur", "east midnapore"},
     {"paschim medinipur", "west midnapore"},
+    # State spellings: AGMARKNET writes the older/alternate form, the app ships
+    # the current official one. Without these the state looked empty and every
+    # district in it showed "no data" even though real rows were stored.
+    {"kerala", "keralam"},
+    {"chhattisgarh", "chattisgarh"},
+    {"delhi", "nct of delhi", "new delhi"},
+    {"andaman and nicobar islands", "andaman and nicobar"},
+    # District spellings that are beyond the near-identical fuzzy match.
+    {"bengaluru urban", "bengaluru", "bangalore", "bengaluru south",
+     "bengaluru north"},
+    {"warangal urban", "warangal"},
+    {"komaram bheem", "asifabad"},
+    {"lakhimpur kheri", "khiri (lakhimpur)", "khiri"},
+    {"pauri garhwal", "garhwal (pauri)", "garhwal"},
+    {"rupnagar", "ropar (rupnagar)", "ropar"},
+    {"shaheed bhagat singh nagar", "nawanshahr"},
+    {"nuh", "mewat"},
+    {"fatehgarh sahib", "fatehgarh"},
+    {"narmadapuram", "hoshangabad"},
+    {"kanyakumari", "kannyiakumari"},
+    {"tenkasi", "thenkasi"},
+    {"anantapur", "ananthapuramu"},
+    {"dr. b.r. ambedkar konaseema", "dr.b.r.a.konaseema",
+     "dr bra ambedkar konaseema"},
+    {"lakhisarai", "luckeesarai"},
+    {"east champaran", "east champaran/ motihari"},
+    {"kaimur", "kaimur/bhabhua"},
+    {"vadodara", "vadodara(baroda)", "baroda"},
+    {"junagadh", "junagarh"},
+    {"mahendragarh", "mahendragarh-narnaul"},
+    {"barwani", "badwani"},
+    {"balangir", "bolangir"},
+    {"ferozepur", "ferozpur"},
+    {"bathinda", "bhatinda"},
+    {"purba medinipur", "medinipur(e)", "east medinipur"},
+    {"nainital", "nanital"},
+    {"budaun", "badaun"},
+    {"west tripura", "west district"},
 ]
 
 
@@ -689,20 +727,17 @@ def has_state(state: str) -> bool:
     if not state or str(state).strip().lower() in ("", "all", "none"):
         return False
     init_db()
-    key = str(state).strip().lower()
+    sv = sorted(name_variants(state) or {str(state).strip().lower()})
     with _lock:
         conn = _connect()
-        row = conn.execute(
-            "SELECT 1 FROM mandi_prices WHERE lower(state) = ? LIMIT 1", (key,)     
-        ).fetchone()
-        if row:
-            return True
-        sv = sorted(name_variants(state))
-        row = conn.execute(
-            "SELECT 1 FROM mandi_monthly WHERE lower(state) IN ("
-            + ",".join("?" * len(sv)) + ") LIMIT 1", tuple(sv)
-        ).fetchone()
-    return row is not None
+        for table in ("mandi_prices", "mandi_monthly"):
+            row = conn.execute(
+                f"SELECT 1 FROM {table} WHERE lower(state) IN ("
+                + ",".join("?" * len(sv)) + ") LIMIT 1", tuple(sv)
+            ).fetchone()
+            if row:
+                return True
+    return False
 
 
 def monthly_commodities(state: Optional[str] = None,

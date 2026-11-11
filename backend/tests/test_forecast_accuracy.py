@@ -350,3 +350,43 @@ def test_low_confidence_signal_does_not_give_sell_advice():
 def test_confident_signal_still_advises():
     text = pf._signal_text(-8.0, mape=4.0)
     assert "consider selling" in text
+
+
+# 4. Market drill-down: a mandi card must forecast that mandi's own series.
+def test_market_scope_uses_that_mandis_series(monkeypatch):
+    """Clicking a mandi used to raise "truth value of a Series is ambiguous"
+    inside `_series_with_basis`, so every market-scoped forecast was a 500."""
+    import price_store
+
+    idx = pd.date_range("2026-01-01", periods=120, freq="D")
+    df = pd.DataFrame({
+        "date": list(idx) * 2,
+        "market": ["Mapusa APMC"] * 120 + ["Another APMC"] * 120,
+        "modal_price": [5000.0] * 120 + [9000.0] * 120,
+    })
+    monkeypatch.setattr(price_store, "history", lambda *a, **k: df)
+    monkeypatch.setattr(price_store, "monthly_history",
+                        lambda *a, **k: pd.DataFrame())
+
+    series, basis = pf._series_with_basis("Banana", "North Goa", "Goa",
+                                          "mapusa apmc")
+    assert basis == "daily"
+    assert float(series.max()) == 5000.0, "must use the requested mandi only"
+
+
+def test_market_scope_falls_back_when_market_is_unknown(monkeypatch):
+    """An unknown mandi name must not empty the series."""
+    import price_store
+
+    idx = pd.date_range("2026-01-01", periods=120, freq="D")
+    df = pd.DataFrame({
+        "date": idx, "market": ["Mapusa APMC"] * 120,
+        "modal_price": [5000.0] * 120,
+    })
+    monkeypatch.setattr(price_store, "history", lambda *a, **k: df)
+    monkeypatch.setattr(price_store, "monthly_history",
+                        lambda *a, **k: pd.DataFrame())
+
+    series, basis = pf._series_with_basis("Banana", "North Goa", "Goa",
+                                          "No Such Mandi")
+    assert basis == "daily" and len(series) >= 60

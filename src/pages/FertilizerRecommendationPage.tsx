@@ -27,11 +27,26 @@ interface Match {
   Remark?: string;
 }
 
+interface IcarSource {
+  title: string;
+  doc: string;
+  page?: number | null;
+  score?: number | null;
+  excerpt: string;
+}
+
 interface FertilizerResponse {
   recommended_fertilizers?: string[];
   top_matches?: Match[];
   soil_nutrients?: Record<string, number>;
   source?: string;
+  /** ICAR passages retrieved for this crop and soil, with their citations. */
+  icar_context?: IcarSource[];
+  /** LLM advisory grounded in those passages (null when no LLM key is set). */
+  icar_advice?: string | null;
+  icar_provider?: string | null;
+  icar_note?: string | null;
+  icar_retrieval?: string | null;
   error?: string;
 }
 
@@ -262,9 +277,62 @@ const FertilizerRecommendationPage: React.FC = () => {
               />
             )}
 
+            {(result.icar_advice || result.icar_context?.length) && (
+              <Card>
+                <div className="flex flex-wrap items-center gap-2">
+                  <CardLabel>ICAR guidance</CardLabel>
+                  {result.icar_advice && (
+                    <Badge tone="live">
+                      {result.icar_provider ? `advisory · ${result.icar_provider}` : 'advisory'}
+                    </Badge>
+                  )}
+                  {result.icar_retrieval && (
+                    <Badge tone="neutral">retrieved via {result.icar_retrieval}</Badge>
+                  )}
+                </div>
+
+                {result.icar_advice ? (
+                  <div className="mt-2 space-y-2 text-[12.5px] leading-relaxed text-ink">
+                    {result.icar_advice
+                      .split(/\n{2,}/)
+                      .filter((para) => para.trim())
+                      .map((para, i) => (
+                        <p key={i} className="whitespace-pre-line">
+                          {para.replace(/\*\*/g, '').trim()}
+                        </p>
+                      ))}
+                  </div>
+                ) : (
+                  <p className="mt-2 text-[12px] leading-relaxed text-ink-muted">
+                    {result.icar_note ||
+                      'Showing the ICAR passages retrieved for this crop and soil.'}
+                  </p>
+                )}
+
+                {result.icar_context?.length ? (
+                  <div className="mt-3 space-y-2 border-t border-border pt-3">
+                    <p className="text-[10.5px] font-700 uppercase tracking-[0.08em] text-ink-muted">
+                      Sources (ICAR)
+                    </p>
+                    {result.icar_context.map((s) => (
+                      <div key={`${s.doc}-${s.page}-${s.excerpt.slice(0, 12)}`} className="rounded-sm bg-surface-2 px-3 py-2">
+                        <p className="text-[11.5px] font-700 text-ink">
+                          {s.title}
+                          {s.page ? ` · page ${s.page}` : ''}
+                        </p>
+                        <p className="mt-1 text-[11.5px] leading-relaxed text-ink-muted">
+                          {s.excerpt}…
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+              </Card>
+            )}
+
             <p className="px-1 text-[11px] leading-relaxed text-ink-muted">
-              Guidance based on the dataset model, not a laboratory soil test. Confirm doses with
-              your local Krishi Vigyan Kendra before applying.
+              Guidance based on the dataset model and ICAR documents, not a laboratory soil test.
+              Confirm doses with your local Krishi Vigyan Kendra before applying.
             </p>
           </div>
         )}

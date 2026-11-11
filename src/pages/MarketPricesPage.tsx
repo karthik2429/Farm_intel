@@ -551,7 +551,18 @@ const MarketPricesPage: React.FC = () => {
                 key={r.commodity}
                 data={r.price}
                 spark={r.spark}
-                onClick={() => navigate(`/predict?crop=${encodeURIComponent(r.commodity)}`)}
+                onClick={() => {
+                  // Open this crop's forecast for the mandi that quoted it —
+                  // the same crop in a different district is a different
+                  // price series, so the scope travels with the click.
+                  const q = new URLSearchParams({ crop: r.commodity });
+                  const st = r.price.resolvedState || r.price.state || scope.state;
+                  const dist = r.price.resolvedDistrict || scope.district;
+                  if (st) q.set('state', st);
+                  if (dist) q.set('district', dist);
+                  if (r.price.market) q.set('market', r.price.market);
+                  navigate(`/predict?${q.toString()}`);
+                }}
               />
             ))}
           </div>

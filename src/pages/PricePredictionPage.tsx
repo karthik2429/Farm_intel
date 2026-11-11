@@ -94,6 +94,8 @@ const PricePredictionPage: React.FC = () => {
 
   const [commodities, setCommodities] = React.useState<string[]>([]);
   const [crop, setCrop] = React.useState(params.get('crop') || profile?.crops?.[0] || 'Tomato');
+  /** The mandi the farmer drilled into from the market list (optional). */
+  const marketParam = params.get('market') || '';
   const [forecast, setForecast] = React.useState<Forecast | null>(null);
   const [history, setHistory] = React.useState<{ date: string; price: number }[]>([]);
   const [loading, setLoading] = React.useState(true);
@@ -105,8 +107,8 @@ const PricePredictionPage: React.FC = () => {
   // Forecast scope. The profile supplies the default, but a state can be
   // switched here so the same crop can be compared across states — every state
   // carries its own AGMARKNET monthly history.
-  const [scopeState, setScopeState] = React.useState(loc.state || '');
-  const [scopeDistrict, setScopeDistrict] = React.useState(loc.district || '');
+  const [scopeState, setScopeState] = React.useState(params.get('state') || loc.state || '');
+  const [scopeDistrict, setScopeDistrict] = React.useState(params.get('district') || loc.district || '');
 
   React.useEffect(() => {
     // Adopt the saved profile location once it arrives, without overriding a
@@ -201,7 +203,9 @@ const PricePredictionPage: React.FC = () => {
         body: JSON.stringify({
           district: district || null,
           commodity: crop,
-          market: 'All',
+          // A market from the URL pins the forecast to that mandi's own
+          // series; without one it stays the district/state aggregate.
+          market: marketParam || 'All',
           state: scopeState || null,
         }),
       }).catch(() => null);
@@ -262,7 +266,7 @@ const PricePredictionPage: React.FC = () => {
     return () => {
       alive = false;
     };
-  }, [crop, scopeState, district]);
+  }, [crop, scopeState, district, marketParam]);
 
   // Context factors (season, weather, flood risk, festivals, supply, market
   // breadth). Loaded separately so a slow weather call never blocks the chart.
@@ -314,7 +318,7 @@ const PricePredictionPage: React.FC = () => {
     <AppShell>
       <PageHeader
         title={t('pricePrediction')}
-        subtitle={`${[district, scopeState].filter(Boolean).join(', ') || 'All India'} · 14-day forecast`}
+        subtitle={`${[marketParam, district, scopeState].filter(Boolean).join(' · ') || 'All India'} · 14-day forecast`}
       />
 
       <div className="mb-3 flex items-start gap-2">

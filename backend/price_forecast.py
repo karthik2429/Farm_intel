@@ -70,7 +70,12 @@ def _series_with_basis(commodity: str, district: Optional[str],
     df = price_store.history(commodity, district=district, state=state)
     if not df.empty:
         if market and str(market).lower() != "all":
-            m = df[_norm(df["market"]) == _norm(market)]
+            # Compare names element-wise: `_norm` is a scalar helper, and
+            # calling it on the whole column raised "truth value of a Series
+            # is ambiguous", which made every market-scoped forecast a 500.
+            key = _norm(market)
+            names = df["market"].fillna("").astype(str).map(_norm)
+            m = df[names == key]
             if not m.empty:
                 df = m
         daily = df.groupby("date")["modal_price"].median().sort_index()

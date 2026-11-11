@@ -3,7 +3,12 @@ name: daily-mandi-ingest
 # Accrues REAL mandi price history every day: fetches the AGMARKNET
 # "Current Daily Price" snapshot from api.data.gov.in and mirrors the
 # newest rows into the shared Supabase public.mandi_prices table.
-# Requires repository secrets:
+#
+# The repository root IS the app folder, so every `working-directory` below
+# points at `backend` (not `Farm_intel/backend`).
+#
+# Optional repository secrets (the job SKIPS, and says so, when they are unset;
+# it never fails a run just because the project is running without cloud keys):
 #   DATA_GOV_API_KEY      - your api.data.gov.in key
 #   SUPABASE_URL          - project URL (https://<ref>.supabase.co)
 #   SUPABASE_SERVICE_KEY  - service role key (ingest job only)
@@ -23,6 +28,8 @@ jobs:
     permissions:
       contents: read
     timeout-minutes: 15
+    env:
+      INGEST_READY: ${{ secrets.DATA_GOV_API_KEY != '' && secrets.SUPABASE_URL != '' && secrets.SUPABASE_SERVICE_KEY != '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -30,36 +37,39 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Explain why the job is skipped
+        if: env.INGEST_READY != 'true'
+        run: |
+          echo "Skipping ingest: DATA_GOV_API_KEY / SUPABASE_URL / SUPABASE_SERVICE_KEY are not all set."
+          echo "Add them under Settings -> Secrets and variables -> Actions to enable the daily ingest."
+
       - name: Install deps
+        if: env.INGEST_READY == 'true'
         run: pip install requests pandas pyarrow
 
       - name: Run ingest (fetch rows, verify pages, mirror to Supabase)
-        working-directory: Farm_intel/backend
+        if: env.INGEST_READY == 'true'
+        working-directory: backend
         env:
           DATA_GOV_API_KEY: ${{ secrets.DATA_GOV_API_KEY }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
         run: |
           set -euo pipefail
-          # Fetch today's snapshot. CI has no bundled Goa parquet, only the
-          # mirror step matters here; the local store is the read cache.
           python daily_ingest.py
 
       - name: Derive monthly averages from today's daily rows
-        working-directory: Farm_intel/backend
+        if: env.INGEST_READY == 'true'
+        working-directory: backend
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
         run: |
           set -euo pipefail
-          # Runs server-side (public.refresh_monthly_from_daily), so it works
-          # from a throwaway runner with no local history. A month is only
-          # written once it has 10+ observed days; AGMARKNET's published
-          # averages are never overwritten.
           python refresh_monthly.py
 
       - name: Coverage report
-        if: always()
-        working-directory: Farm_intel/backend
+        if: always() && env.INGEST_READY == 'true'
+        working-directory: backend
         run: |
           python daily_ingest.py --status || true

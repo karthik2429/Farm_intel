@@ -210,6 +210,7 @@ def _gemini_chat(
     messages: List[dict],
     tools: Optional[List[dict]] = None,
     model: Optional[str] = None,
+    max_output_tokens: Optional[int] = None,
 ) -> Tuple[str, List[dict], str]:
     """Gemini generateContent with optional function declarations.
 
@@ -267,7 +268,8 @@ def _gemini_chat(
         "contents": contents,
         "generationConfig": {
             "temperature": 0.3,
-            "maxOutputTokens": max(settings.chat_max_output_tokens, 900),
+            "maxOutputTokens": max(max_output_tokens or 0,
+                                   settings.chat_max_output_tokens, 900),
             "thinkingConfig": {"thinkingLevel": "low"},
         },
     }
@@ -301,7 +303,9 @@ def _gemini_decl(tool: dict) -> dict:
 
 
 def _gemini(messages: List[dict],
-            tools: Optional[List[dict]] = None) -> Tuple[str, List[dict], str]:
+            tools: Optional[List[dict]] = None,
+            max_output_tokens: Optional[int] = None
+            ) -> Tuple[str, List[dict], str]:
     """Gemini with a model chain: an exhausted model falls through to the next.
 
     Quota (429) and high-demand (503) errors are per model, so trying the next
@@ -313,7 +317,8 @@ def _gemini(messages: List[dict],
     last: Optional[Exception] = None
     for model in usable:
         try:
-            return _gemini_chat(messages, tools, model=model)
+            return _gemini_chat(messages, tools, model=model,
+                                max_output_tokens=max_output_tokens)
         except Exception as exc:  # noqa: BLE001 - try the next model
             text = str(exc)
             busy = "HTTP 503" in text or "HTTP 500" in text
@@ -330,13 +335,20 @@ def _gemini(messages: List[dict],
     raise RuntimeError(str(last) if last else "No Gemini model configured")
 
 
-def call_llm(messages: List[dict], tools: Optional[List[dict]] = None) -> Tuple[str, List[dict], str]:
-    """Try each configured provider in order. Raises RuntimeError if all fail."""
+def call_llm(messages: List[dict], tools: Optional[List[dict]] = None,
+             max_output_tokens: Optional[int] = None
+             ) -> Tuple[str, List[dict], str]:
+    """Try each configured provider in order. Raises RuntimeError if all fail.
+
+    `max_output_tokens` raises the Gemini budget for long grounded answers:
+    reasoning tokens are billed against the same ceiling, so a default budget
+    can cut a 150-word advisory off mid-sentence.
+    """
     last: Optional[Exception] = None
     for provider in providers():
         try:
             if provider == "gemini":
-                return _gemini(messages, tools)
+                return _gemini(messages, tools, max_output_tokens)
             return _openai_style_chat(provider, messages, tools)
         except Exception as exc:  # noqa: BLE001 - fall through to the next provider
             logger.warning("provider %s failed: %s", provider, exc)

@@ -45,6 +45,7 @@ import crop_info  # noqa: E402
 import price_store  # noqa: E402
 import chat as chat_service  # noqa: E402
 import price_factors  # noqa: E402
+import fertilizer_rag  # noqa: E402
 from config import settings, service_status  # noqa: E402
 
 app = FastAPI(title="FarmIntel API", version="3.0.0")
@@ -601,19 +602,56 @@ async def recommend_fertilizer(request: FertilizerRequest):
         result = None
 
     if result is None or len(result) == 0:
-        return _rule_based_fertilizer(request.crop, n, p, k, ph)
+        payload = _rule_based_fertilizer(request.crop, n, p, k, ph)
+    else:
+        fertilizers = result["Fertilizer"].value_counts().head(3).index.tolist()
+        top_matches = result[["Fertilizer", "Similarity", "Remark"]].head(5).to_dict("records")
+        payload = {
+            "recommended_fertilizers": fertilizers,
+            "top_matches": top_matches,
+            "soil_nutrients": {"N": round(float(n), 1), "P": round(float(p), 1),
+                               "K": round(float(k), 1), "PH": round(float(ph), 1)},
+            "crop": request.crop,
+            "soil": request.soil,
+            "source": "dataset",
+        }
+    # ICAR retrieval + LLM advisory on top of the deterministic match. The
+    # cosine/rule answer is always returned; this adds cited evidence.
+    payload.update(_icar_advisory(request, n, p, k, ph,
+                                  payload.get("recommended_fertilizers") or []))
+    return payload
 
-    fertilizers = result["Fertilizer"].value_counts().head(3).index.tolist()
-    top_matches = result[["Fertilizer", "Similarity", "Remark"]].head(5).to_dict("records")
-    return {
-        "recommended_fertilizers": fertilizers,
-        "top_matches": top_matches,
-        "soil_nutrients": {"N": round(float(n), 1), "P": round(float(p), 1),
-                           "K": round(float(k), 1), "PH": round(float(ph), 1)},
-        "crop": request.crop,
-        "soil": request.soil,
-        "source": "dataset",
-    }
+
+def _icar_advisory(request: "FertilizerRequest", n: float, p: float, k: float,
+                   ph: float, fertilizers: List[str]) -> Dict[str, Any]:
+    """ICAR passages (and, when a key is set, the written advisory)."""
+    try:
+        rag = fertilizer_rag.advisory(
+            request.crop, request.soil or "", float(n), float(p), float(k),
+            float(ph), fertilizers)
+        return {
+            "icar_context": rag.get("sources") or [],
+            "icar_advice": rag.get("advice"),
+            "icar_provider": rag.get("provider"),
+            "icar_note": rag.get("note"),
+            "icar_retrieval": rag.get("retrieval"),
+        }
+    except Exception as exc:  # noqa: BLE001 - advice must never break the page
+        return {"icar_context": [], "icar_advice": None, "icar_provider": None,
+                "icar_note": f"ICAR layer unavailable ({type(exc).__name__}).",
+                "icar_retrieval": None}
+
+
+@app.get("/fertilizer/icar")
+async def fertilizer_icar(q: Optional[str] = None, k: int = 4):
+    """The ICAR corpus behind the advisory: size, retrieval backend and hits."""
+    try:
+        stats = fertilizer_rag.corpus_stats()
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=503,
+                            detail=f"ICAR corpus unavailable: {exc}")
+    hits = fertilizer_rag.search(q, k=k) if q else []
+    return {"corpus": stats, "query": q, "hits": hits}
 
 
 # ─────────────────────── Location defaults ───────────────────────────────

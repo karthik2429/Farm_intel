@@ -59,3 +59,6 @@ service-account*.json
 /screenshots/tmp/
 test-results/
 playwright-report/
+
+# ICAR vector index (rebuilt locally from the shipped PDFs)
+backend/data/icar/chroma_icar/

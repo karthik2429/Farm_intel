@@ -10,7 +10,7 @@ number shown in the UI.
 | --- | --- |
 | Frontend | React 18, TypeScript, Vite, Tailwind CSS, shadcn/ui, Recharts, Supabase (auth/profile) |
 | Backend | FastAPI, scikit-learn, XGBoost, pandas, NumPy, SQLite price store |
-| ML | Random-forest + XGBoost crop recommender, Holt-Winters price forecast, cosine-similarity fertiliser matcher |
+| ML | Random-forest crop recommender blended with district agronomy and market economics, Holt-Winters price forecast selected per series by rolling-origin backtest, cosine-similarity fertiliser matcher plus an ICAR retrieval-augmented advisory (ChromaDB + LLM) |
 | Data | AGMARKNET (api.data.gov.in daily feed + monthly district analysis), DES district crop/soil data, Open-Meteo weather |
 | Languages | 11 Indian languages (en, hi, kn, te, ta, ml, mr, gu, bn, pa, or) |
 
@@ -43,7 +43,10 @@ backend/                 FastAPI app and data pipeline
   config.py              single env reader for every secret/setting
   mandi_prices.py        price resolution: district feed -> store -> monthly -> MSP
   price_store.py         SQLite store (daily rows + monthly averages)
-  price_forecast.py      Holt-Winters forecast, backtest, confidence bands
+  price_forecast.py      Holt-Winters/naive forecast, backtest, confidence bands
+  fertilizer_rag.py      ICAR corpus (ChromaDB retrieval) + LLM advisory
+  ingest_icar_pdfs.py    add PDFs to the ICAR corpus and rebuild the index
+  data/icar/             nine ICAR PDFs + extracted chunk cache (shipped)
   price_factors.py       season/weather/festival/supply context
   district_data.py       DES district crop share + soil + crop master
   crop_info.py           agronomy facts per crop
@@ -165,7 +168,8 @@ Base URL `http://127.0.0.1:8000` — interactive docs at `/docs`.
 | GET | `/config/status` | Which integrations are configured (never the values) |
 | POST | `/predict` | Crop ranking for soil + location |
 | POST | `/rotation/suggestions`, `/rotation/plan` | Rotation options and nutrient plan |
-| POST | `/fertilizer/recommend` | Fertiliser matches + top-up |
+| POST | `/fertilizer/recommend` | Fertiliser matches + top-up + ICAR evidence and advisory |
+| GET | `/fertilizer/icar` | Corpus size and cited ICAR passages for a query |
 | POST | `/chat` | Assistant reply, cards and actions |
 | GET | `/market/price` | One crop's price with source, date, badge, scope |
 | GET | `/market/history` | Daily/monthly trend for the chart |
@@ -176,6 +180,24 @@ Base URL `http://127.0.0.1:8000` — interactive docs at `/docs`.
 | GET | `/predict/factors` | Season/weather/festival/supply factors |
 | GET | `/crop/info` | Agronomy metadata for a crop list |
 | GET | `/weather` | Current weather for a location |
+
+### ICAR fertiliser knowledge base
+
+Nine ICAR documents (fertiliser dose calculator manual, soil and nutrient
+management technologies, integrated plant nutrition practices, INM in
+groundnut, biofertilizers, microbe-based technologies, the ICAR-IISS INM
+training manual, ICAR-IISS annual report 2023, AICRP NRM achievements) are
+extracted to **4,008 chunks / 1.7M characters** and indexed in ChromaDB.
+`GET /fertilizer/icar` reports the corpus; `POST /fertilizer/recommend`
+returns `icar_context` (cited passages) and `icar_advice`.
+
+Adding a document is one command — it dedupes, re-extracts, and rebuilds the
+index, and the backend detects the changed corpus on restart:
+
+```bash
+.venv/bin/python backend/ingest_icar_pdfs.py ~/Downloads/icar_*.pdf
+.venv/bin/python backend/ingest_icar_pdfs.py --rebuild   # re-index only
+```
 
 ### District scoping
 

@@ -19,3 +19,7 @@ open-meteo-py>=1.0.0
 
 # Utilities
 tqdm>=4.65.0
+
+# ICAR knowledge layer (fertiliser advisory)
+pymupdf>=1.24.0
+chromadb>=0.5.0
