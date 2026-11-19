@@ -10,7 +10,7 @@ number shown in the UI.
 | --- | --- |
 | Frontend | React 18, TypeScript, Vite, Tailwind CSS, shadcn/ui, Recharts, Supabase (auth/profile) |
 | Backend | FastAPI, scikit-learn, XGBoost, pandas, NumPy, SQLite price store |
-| ML | Random-forest crop recommender blended with district agronomy and market economics, Holt-Winters price forecast selected per series by rolling-origin backtest, cosine-similarity fertiliser matcher plus an ICAR retrieval-augmented advisory (ChromaDB + LLM) |
+| ML | Random-forest crop recommender blended with district agronomy and market economics, Holt-Winters price forecast selected per series by rolling-origin backtest, random-forest fertiliser classifier (soil test + weather + district organic carbon, 0.93 CV accuracy) plus an ICAR retrieval-augmented advisory (ChromaDB + LLM) |
 | Data | AGMARKNET (api.data.gov.in daily feed + monthly district analysis), DES district crop/soil data, Open-Meteo weather |
 | Languages | 11 Indian languages (en, hi, kn, te, ta, ml, mr, gu, bn, pa, or) |
 
@@ -187,6 +187,14 @@ Base URL `http://127.0.0.1:8000` — interactive docs at `/docs`.
 `/predict` and `/fertilizer/recommend` are served by two trained models, both
 retrainable from the repo and both report their own measured accuracy.
 
+**Reproducibility** — every scored endpoint returns the same payload for the same
+input: no sampling, no shuffling, no clock-derived seeds, and the LLM advisory is
+requested at temperature 0 and memoised per question. `tests/test_determinism.py`
+and `tests/test_crop_factors.py` hold that, and check that the ranking really
+reconciles its factors (soil test, climate, season, district history, mandi
+price, gross return, fertiliser cost and margin). See
+`reports/prediction-audit.md`.
+
 **Crop recommendation** — `models/crop_model.pkl`, trained on the 6,878-row
 district table (355 districts, 14 states: soil survey indices, organic carbon,
 salinity, coordinates, per-season climatology). Because every row of a
@@ -198,16 +206,30 @@ AUC**, against 0.897 for the nearest-district lookup and 0.683 for the national
 crop-frequency prior. It replaces the place-blind seven-column Kaggle
 RandomForest, which remains the fallback when the bundle is absent.
 
-**Fertiliser** — `models/fertilizer_model.pkl`, a RandomForest over the columns
-the endpoint actually has (N, P, K, pH, soil class, crop). It scores **0.794
-accuracy / 0.727 macro-F1** in 5-fold CV, against 0.561 top-1 for the cosine
-retrieval it replaced. A pH amendment now leads the answer (lime below 5.5,
-gypsum above 8.5), which the dataset's label set never produced.
+**Fertiliser** — `models/fertilizer_model.pkl`, a RandomForest over N, P, K, pH,
+soil class, crop **plus three inputs the platform already holds**: live
+temperature, district organic carbon (from the DES survey's band shares) and
+moisture (from relative humidity). It scores **0.927 accuracy / 0.911
+macro-F1** in 5-fold CV, against 0.794/0.727 without those three columns and
+0.561 top-1 for the cosine retrieval it replaced. The training data is snapped
+to the same resolution the server can supply (carbon to band midpoints,
+moisture to 1% steps) so the number reflects deployment, and the API reports
+which inputs it used in `model_inputs`. A pH amendment leads the answer (lime
+below 5.5, gypsum above 8.5), which the dataset's label set never produced.
 
 ```bash
 .venv/bin/python backend/train_crop_model.py        # ~1 min; writes the bundle + report
 .venv/bin/python backend/train_fertilizer_model.py  # ~20 s
 ```
+
+**Fertiliser dose** — the same endpoint also returns kg/ha, not just a name. The
+ICAR FertiSolver manual's Appendix-A recommended dose is adjusted +25%/−25% for
+low/high soil test categories (ICAR-IISS INM manual p36), then converted to
+product kilograms through the manual's Table 3 grades (DAP 18:46:0, urea
+46:0:0, MOP 0:0:60, SSP 0:16:0), with the manual's urea split schedule and a
+lime estimate from its pH 5.5 example. Crops the manual has no row for (cotton,
+sugarcane, turmeric, ginger, barley) say so instead of guessing. See
+`reports/fertilizer-dose-report.md`.
 
 Full numbers, including the baselines and the columns deliberately left out:
 `reports/crop-model-report.md`, `reports/fertilizer-model-report.md`.

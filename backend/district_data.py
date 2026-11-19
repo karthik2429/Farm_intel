@@ -139,6 +139,21 @@ def _ph_from_shares(acidic, neutral, alkaline) -> float:
     return round(float(np.clip(share, 4.5, 9.5)), 1)
 
 
+def _band_shares(high, medium, low, names=("high", "medium", "low")) -> dict:
+    """Sample counts -> share of samples in each band (fractions, sum to 1)."""
+    zero = {n: 0.0 for n in names}
+    vals = [high, medium, low]
+    if any(v is None or (isinstance(v, float) and np.isnan(float(v))) for v in vals):
+        return zero
+    high, medium, low = float(high), float(medium), float(low)
+    total = high + medium + low
+    if total <= 0:
+        return zero
+    return {names[0]: round(high / total, 3),
+            names[1]: round(medium / total, 3),
+            names[2]: round(low / total, 3)}
+
+
 def _profile_from_row(r) -> dict:
     return {
         "state": r["state"],
@@ -168,14 +183,113 @@ try:
     ].mean()
     SOIL_PROFILES: Dict[str, dict] = {}      # name -> profile (unique names)
     SOIL_PROFILE_INDEX: Dict[str, list] = {} # name -> [profiles] (all states)
+    # Organic-carbon sample counts per district. The survey publishes three
+    # bands rather than a figure, and the fertiliser model needs a number, so
+    # the band shares are kept here to build an estimate (see organic_carbon).
+    SOIL_OC: Dict[str, list] = {}
+    # The survey's own low/medium/high sample counts per nutrient. The fertiliser
+    # dose engine has to classify a district as low/medium/high the same way the
+    # ICAR tables do, and the survey already publishes exactly that split - using
+    # the smoothed kg/ha estimate for it would be a category error.
+    SOIL_BANDS: Dict[str, dict] = {}
     for _, r in agg.iterrows():
         prof = _profile_from_row(r)
         SOIL_PROFILES[r["district"]] = prof
         SOIL_PROFILE_INDEX.setdefault(r["district"], []).append(prof)
+        SOIL_OC[r["district"]] = [float(r.get("oc_high") or 0),
+                                   float(r.get("oc_medium") or 0),
+                                   float(r.get("oc_low") or 0)]
+        SOIL_BANDS[r["district"]] = {
+            "N": _band_shares(r.get("n_high"), r.get("n_medium"), r.get("n_low")),
+            "P": _band_shares(r.get("p_high"), r.get("p_medium"), r.get("p_low")),
+            "K": _band_shares(r.get("k_high"), r.get("k_medium"), r.get("k_low")),
+            "pH": _band_shares(r.get("ph_acidic"), r.get("ph_neutral"),
+                               r.get("ph_alkaline"),
+                               names=("acidic", "neutral", "alkaline")),
+        }
 except Exception as e:  # noqa: BLE001
     print(f"[district_data] soil CSV load failed: {e}")
     SOIL_PROFILES = {}
     SOIL_PROFILE_INDEX = {}
+    SOIL_OC = {}
+    SOIL_BANDS = {}
+
+
+# Organic-carbon band midpoints, as percentages of soil organic carbon. The
+# survey reports how many samples fell in each band; these are the conventional
+# midpoints for low (<0.5%), medium (0.5-0.75%) and high (>0.75%) carbon.
+OC_BAND_MIDPOINTS = {"low": 0.35, "medium": 0.62, "high": 1.25}
+
+
+def organic_carbon(district: Optional[str], state: Optional[str] = None,
+                   lat: Optional[float] = None,
+                   lon: Optional[float] = None) -> Optional[dict]:
+    """Estimated soil organic carbon (%), from the district's OC band shares.
+
+    The fertiliser model was trained with organic carbon as an input because
+    it is what separates a compost recommendation from a balanced NPK one; the
+    DES survey only publishes band counts, so the estimate is the weighted mean
+    of the band midpoints. `band` reports which band dominates, so a caller can
+    describe the input honestly instead of implying a laboratory figure.
+    """
+    loc = resolve_district(district, state, lat, lon)
+    if not loc:
+        return None
+    counts = SOIL_OC.get(loc["district"])
+    if not counts:
+        return None
+    high, medium, low = counts
+    total = high + medium + low
+    if total <= 0:
+        return None
+    value = (high * OC_BAND_MIDPOINTS["high"]
+             + medium * OC_BAND_MIDPOINTS["medium"]
+             + low * OC_BAND_MIDPOINTS["low"]) / total
+    dominant = max((("high", high), ("medium", medium), ("low", low)),
+                   key=lambda x: x[1])[0]
+    return {
+        "value": round(float(value), 3),
+        "band": dominant,
+        "source": "district_soil_survey",
+        "shares": {"high": round(high / total, 3),
+                   "medium": round(medium / total, 3),
+                   "low": round(low / total, 3)},
+    }
+
+
+def nutrient_bands(district: Optional[str], state: Optional[str] = None,
+                   lat: Optional[float] = None,
+                   lon: Optional[float] = None) -> Optional[dict]:
+    """District soil status as low/medium/high, straight from the survey.
+
+    The DES district survey reports how many samples fell in each of the three
+    fertility bands for N, P and K, and the same split for soil reaction. The
+    dominant band is therefore the district's status, which is the same
+    classification the ICAR tables use - no threshold is applied to a smoothed
+    estimate that was never a soil test value.
+    """
+    loc = resolve_district(district, state, lat, lon)
+    if not loc:
+        return None
+    bands = SOIL_BANDS.get(loc["district"])
+    if not bands:
+        return None
+    levels = {}
+    for nut in ("N", "P", "K"):
+        shares = bands.get(nut) or {}
+        if not shares or not any(shares.values()):
+            continue
+        levels[nut] = max(shares, key=shares.get)
+    ph_shares = bands.get("pH") or {}
+    if any(ph_shares.values()):
+        levels["pH"] = max(ph_shares, key=ph_shares.get)
+    return {
+        "district": loc.get("district"),
+        "state": loc.get("state"),
+        "levels": levels,
+        "shares": bands,
+        "source": "district_soil_survey",
+    }
 
 
 try:
@@ -759,7 +873,38 @@ def _crop_economics(candidates: List[Tuple[str, float]],
             mid = (float(band[0]) + float(band[1])) / 2.0 if band[0] > 0 else float(band[1])
             gross = round(mid * 10.0 * price, 2)
 
+        # The one input cost this platform can actually price: the fertiliser
+        # dose from the ICAR tables, at the manual's own 2021 rates. Seed,
+        # labour and machinery are not in it, so the result is a margin after
+        # fertiliser - never presented as profit.
+        cost = margin = None
+        try:
+            import fertilizer_dose
+            levels = {}
+            bands = nutrient_bands(district, state) if district else None
+            for nut in ("N", "P", "K"):
+                level = ((bands or {}).get("levels") or {}).get(nut)
+                if level:
+                    levels[nut] = level
+            dose = fertilizer_dose.compute_dose(
+                crop_name.title(), None, None, None, None,
+                levels=levels or None,
+                levels_source="district_soil_survey" if levels else "default_medium")
+            estimate = fertilizer_dose.estimate_cost(dose) \
+                if dose.get("available") else None
+            if estimate:
+                cost = estimate["fertiliser_cost_per_ha"]
+                if gross:
+                    margin = round(float(gross) - cost, 2)
+        except Exception as e:  # noqa: BLE001 - economics must not break ranking
+            print(f"[district_data] fertiliser cost failed for {crop_name}: {e}")
+
         out[crop_name] = {
+            "fertiliser_cost_per_ha": cost,
+            "margin_after_fertiliser_per_ha": margin,
+            "cost_basis": ("ICAR FertiSolver Appendix-B, 2021 prices; fertiliser "
+                           "only, excludes seed/labour/machinery")
+            if cost is not None else None,
             "market_price": price,
             "price_commodity": price_commodity,
             "market_price_source": source,
@@ -789,9 +934,10 @@ def _score_candidates(
     soil fit, climate fit and what the crop actually earns per hectare -
     shared by the district path and the state-merge path."""
     master = MASTER_CROPS
-    soil = loc.get("soil")
-    soil_valid = bool(soil) and any(
-        (soil.get(k) or 0) > 0 for k in ("N", "P", "K"))
+    # The district survey values, reported back as `soil_used`; the scoring
+    # itself uses the caller's N/P/K/ph, which are these values unless the
+    # farmer sent their own soil test.
+    district_soil = loc.get("soil")
 
     ml_probs: Dict[str, float] = {}
     if ML_MODEL is not None and ML_LE is not None:
@@ -832,9 +978,13 @@ def _score_candidates(
         hist_score = (0.55 * yield_s + 0.45 * area_s) * prior
 
         prof = master.get(crop_name)
-        if prof and soil_valid:
-            soil_fit = _soil_fit(soil["N"], soil["P"], soil["K"], soil["ph"],
-                                 prof, rainfall)
+        if prof:
+            # Score the soil this answer is actually based on: the farmer's own
+            # soil test when one was sent, the district survey otherwise. This
+            # used to always read the district survey, so a typed soil test
+            # moved the ML feature vector but never the "soil match" the page
+            # showed - the same soil-fit number appeared for every soil test.
+            soil_fit = _soil_fit(N, P, K, ph, prof, rainfall)
         else:
             soil_fit = 0.5
         climate_fit = _climate_fit(temperature, rainfall, prof) if prof else 0.5
@@ -894,6 +1044,10 @@ def _score_candidates(
             "price_district": e.get("price_district"),
             "yield_t_ha": e.get("yield_t_ha"),
             "gross_return_per_ha": gross,
+            "fertiliser_cost_per_ha": e.get("fertiliser_cost_per_ha"),
+            "margin_after_fertiliser_per_ha":
+                e.get("margin_after_fertiliser_per_ha"),
+            "cost_basis": e.get("cost_basis"),
             "final_score": round(float(final), 4),
         })
 
@@ -917,9 +1071,8 @@ def _score_candidates(
         for lbl, p in commercial:
             a = aff.get(lbl, 0.0)
             prof = master.get(lbl)
-            if prof and soil_valid:
-                sf = _soil_fit(soil["N"], soil["P"], soil["K"], soil["ph"],
-                               prof, rainfall)
+            if prof:
+                sf = _soil_fit(N, P, K, ph, prof, rainfall)
             else:
                 sf = 0.5
             raw = 0.4 * p + 0.5 * a + 0.1 * sf
@@ -974,7 +1127,7 @@ def _score_candidates(
     return {
         "resolved_district": loc.get("district"),
         "resolved_state": loc.get("state"),
-        "soil_used": soil,
+        "soil_used": district_soil,
         "season": season,
         "top": results[0]["crop"] if results else None,
         "economics": {

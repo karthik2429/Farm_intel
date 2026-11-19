@@ -284,19 +284,22 @@ def add_weather_features(df: pd.DataFrame) -> pd.DataFrame:
         elif m in MONSOON_MONTHS: return base + 2
         return base
 
+    # Deterministic monthly normals, not samples. This branch used to draw
+    # np.random.gamma/exponential/normal for each request, so two identical
+    # forecasts for a series without stored weather returned different prices.
+    # The fallback is a climatology, and a climatology has one value per month.
     def rainfall(m):
         if m in MONSOON_MONTHS:
-            return np.random.gamma(2, 400) if m in [7, 8] else np.random.gamma(2, 200)
+            return 800.0 if m in (7, 8) else 400.0
         elif m in POST_MONSOON_MONTHS:
-            return np.random.exponential(50)
-        return np.random.exponential(5)
+            return 50.0
+        return 5.0
 
     def humidity(m):
-        base = 75
-        if m in MONSOON_MONTHS: return np.clip(base + np.random.normal(0, 5), 80, 95)
-        elif m in POST_MONSOON_MONTHS: return np.clip(base + np.random.normal(0, 8), 70, 85)
-        elif m in WINTER_MONTHS: return np.clip(base + np.random.normal(0, 10), 55, 75)
-        return np.clip(base + np.random.normal(0, 10), 60, 80)
+        if m in MONSOON_MONTHS: return 90.0
+        elif m in POST_MONSOON_MONTHS: return 78.0
+        elif m in WINTER_MONTHS: return 62.0
+        return 70.0
 
     df["temp_max_est"] = df["month"].apply(temp_max)
     df["temp_min_est"] = df["month"].apply(temp_min)

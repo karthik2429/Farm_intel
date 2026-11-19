@@ -51,6 +51,20 @@ ALIASES: Dict[str, str] = {
     "cotton": "cotton",
     "jute": "jute",
     "coffee": "coffee",
+    # Local names that appear inside the recommendation labels, e.g.
+    # "Tur (Pigeon Pea)". Without these the base name wins the lookup and the
+    # reference row (yield, duration) is missed.
+    "tur": "pigeon pea",
+    "arhar": "pigeon pea",
+    "red gram": "pigeon pea",
+    "moong": "green gram",
+    "mung": "green gram",
+    "urad": "black gram",
+    "masoor": "lentil",
+    "chana": "chickpea",
+    "makka": "maize",
+    "til": "sesame",
+    "sarson": "mustard",
 }
 
 # Standard published Indian agronomy figures. duration_days is the normal
@@ -145,6 +159,30 @@ def normalize(name: str) -> str:
     return key.replace(" ", "") if not key else key
 
 
+def _lookup_keys(name: str) -> List[str]:
+    """Keys to try for a display label, most specific first.
+
+    The recommendation page labels crops the way the district model does -
+    "Ragi (Finger Millet)", "Tur (Pigeon Pea)" - and compacting that whole
+    string produced "ragi(fingermillet)", which matched nothing: the top crop on
+    the results page showed no yield, no duration and no price while the same
+    crop lower down had them. Try the base name, then the parenthetical, then
+    the full string.
+    """
+    raw = (name or "").strip().lower()
+    keys: List[str] = []
+    if "(" in raw:
+        base = raw.split("(")[0].strip()
+        inner = raw[raw.find("(") + 1: raw.rfind(")")].strip() \
+            if raw.rfind(")") > raw.find("(") else ""
+        if base:
+            keys.append(normalize(base))
+        if inner:
+            keys.append(normalize(inner))
+    keys.append(normalize(raw))
+    return [k for k in keys if k]
+
+
 def get_crop_info(raw_names: List[str]) -> Dict[str, dict]:
     """Per requested crop: real agronomy from the master dataset + reference
     table. Missing entries include an explicit `unavailable: True` so the
@@ -161,7 +199,12 @@ def get_crop_info(raw_names: List[str]) -> Dict[str, dict]:
     for raw in raw_names:
         if not raw or not str(raw).strip():
             continue
-        canon = normalize(raw)
+        keys = _lookup_keys(raw)
+        canon = keys[0]
+        for candidate in keys:
+            if candidate in master_idx or candidate in REFERENCE:
+                canon = candidate
+                break
         info: dict = {
             "requested": raw,
             "canonical": canon,

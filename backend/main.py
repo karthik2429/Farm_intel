@@ -12,6 +12,7 @@ PricePredictionPage, HomeDashboard).
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from collections import OrderedDict
 from typing import Optional, List, Dict, Any
 import sys
 import json
@@ -29,6 +30,7 @@ BASE_DIR = Path(__file__).parent
 sys.path.insert(0, str(BASE_DIR))
 sys.path.insert(0, str(BASE_DIR / "price_predictor" / "goa_model"))
 
+from utils import utils as utils_module  # noqa: E402
 from utils.utils import (  # noqa: E402
     get_rotation_suggestions,
     plan_two_season_rotation,
@@ -36,10 +38,12 @@ from utils.utils import (  # noqa: E402
     get_default_npk_from_location,
     get_lat_lon_from_district,
     get_weather,
+    fertilizer_extra_inputs,
 )
 import price_engine  # noqa: E402
 import district_data  # noqa: E402
 import mandi_prices  # noqa: E402
+import fertilizer_dose  # noqa: E402
 import price_forecast  # noqa: E402
 import crop_info  # noqa: E402
 import price_store  # noqa: E402
@@ -255,12 +259,24 @@ def _weather_or_default(lat: Optional[float], lon: Optional[float]):
 
 
 def _fill_npk_from_location(payload: FertilizerRequest):
-    """Resolve missing N/P/K/PH from the district's real soil survey."""
+    """Resolve missing N/P/K/PH from the district's real soil survey.
+
+    Returns the four values plus where the unfilled ones came from:
+    "request" (the farmer supplied them), "district_soil_survey" (the DES
+    survey profile) or "fallback" (India-wide neutral values). The dose engine
+    needs that: a survey band and a laboratory soil test are classified
+    differently, and a neutral default must not be mistaken for a low soil.
+    """
+    source = "request"
     if None not in (payload.N, payload.P, payload.K, payload.PH):
-        return payload.N, payload.P, payload.K, payload.PH
+        return payload.N, payload.P, payload.K, payload.PH, source
+    profile = district_data.resolve_district(
+        payload.district, getattr(payload, "state", None),
+        payload.lat, payload.lon)
     defaults = district_data.default_soil_for(
         payload.district, getattr(payload, "state", None),
         payload.lat, payload.lon)
+    source = "district_soil_survey" if profile else "fallback"
     if not defaults:
         lat, lon = _resolve_coords(payload.district, payload.lat,
                                    payload.lon, payload.mode or "auto",
@@ -269,11 +285,14 @@ def _fill_npk_from_location(payload: FertilizerRequest):
             lat=lat, lon=lon,
             district=(payload.district or "").lower() or None,
             mode="coords" if (lat is not None and lon is not None) else "auto")
+        source = "fallback"
     n = payload.N if payload.N is not None else defaults.get("N", 90)
     p = payload.P if payload.P is not None else defaults.get("P", 40)
     k = payload.K if payload.K is not None else defaults.get("K", 40)
     ph = payload.PH if payload.PH is not None else defaults.get("ph", 6.5)
-    return n, p, k, ph
+    if None not in (payload.N, payload.P, payload.K, payload.PH):
+        source = "request"
+    return n, p, k, ph, source
 
 
 # ─────────────────────── Health ──────────────────────────────────────────
@@ -317,6 +336,44 @@ async def config_status():
 
 
 # ─────────────────────── Crop recommendation ─────────────────────────────
+
+_NDVI_CACHE: Dict[tuple, Dict[str, Any]] = {}
+
+
+def _land_suitability_context(lat: Optional[float], lon: Optional[float],
+                              season: str) -> Dict[str, Any]:
+    """Sentinel-2 NDVI at the farmer's point, as land-suitability context.
+
+    Reported alongside the ranking, not blended into the trained classifier: the
+    district model is fitted on survey and climate features, and adding a
+    satellite index to its output without retraining it would be a number with
+    no provenance. When Earth Engine is not configured the answer says so.
+    """
+    if lat is None or lon is None:
+        return {"ndvi": None, "suitability": None,
+                "source": "unavailable",
+                "note": "NDVI needs the district's coordinates"}
+    if not getattr(utils_module, "HAVE_EE", False):
+        return {"ndvi": None, "suitability": None,
+                "source": "unavailable",
+                "note": ("Earth Engine is not installed or not authenticated on "
+                         "this server, so no vegetation index was read")}
+    key = (round(float(lat), 2), round(float(lon), 2), (season or "").lower())
+    hit = _NDVI_CACHE.get(key)
+    if hit is not None:
+        return dict(hit)
+    try:
+        suitability, ndvi = utils_module.land_suitability(
+            float(lat), float(lon), season or "kharif")
+        out = {"ndvi": round(float(ndvi), 3), "suitability": suitability,
+               "source": "Sentinel-2 surface reflectance (COPERNICUS/S2_SR_HARMONIZED), "
+                         "season maximum NDVI, 500 m buffer"}
+    except Exception as exc:  # noqa: BLE001 - the ranking must still answer
+        return {"ndvi": None, "suitability": None, "source": "error",
+                "note": f"Earth Engine query failed ({type(exc).__name__})"}
+    _NDVI_CACHE[key] = out
+    return dict(out)
+
 
 @app.post("/predict")
 async def predict_crop(request: CropRecommendRequest):
@@ -387,6 +444,11 @@ async def predict_crop(request: CropRecommendRequest):
         result["weather"] = {"temperature": round(temp, 1),
                              "humidity": round(hum, 1),
                              "rainfall": round(rain, 1)}
+        # Sentinel-2 NDVI land-suitability context for this point and season.
+        # Earth Engine needs credentials, so a missing or failed call reports
+        # "unavailable" instead of inventing an index or failing /predict.
+        result["land_suitability"] = _land_suitability_context(
+            lat, lon, request.season or "kharif")
         # The district survey behind the soil score, so the result can show
         # which soil it actually matched against instead of a bare percentage.
         result["soil_survey"] = (
@@ -417,6 +479,8 @@ async def predict_crop(request: CropRecommendRequest):
         "price_commodity", "market_price_source", "market_price_date",
         "market_price_scope", "market_price_badge", "price_market",
         "price_district", "yield_t_ha", "gross_return_per_ha",
+        "fertiliser_cost_per_ha", "margin_after_fertiliser_per_ha",
+        "cost_basis",
     )
     alternatives = [
         {"crop": r["crop"], "confidence": round(float(r["display_score"]), 4),
@@ -434,6 +498,7 @@ async def predict_crop(request: CropRecommendRequest):
         "soil_used": result.get("soil_used"),
         "soil_survey": result.get("soil_survey"),
         "weather": result.get("weather"),
+        "land_suitability": result.get("land_suitability"),
         "economics": result.get("economics"),
         "note": result.get("note"),
     }
@@ -615,8 +680,9 @@ async def recommend_fertilizer(request: FertilizerRequest):
     transparent rule-based fallback for crops absent from the dataset.
     Response shape matches FertilizerRecommendationPage.
     """
+    soil_source = "fallback"
     try:
-        n, p, k, ph = _fill_npk_from_location(request)
+        n, p, k, ph, soil_source = _fill_npk_from_location(request)
     except Exception:  # noqa: BLE001
         n, p, k, ph = request.N or 90, request.P or 40, request.K or 40, request.PH or 6.5
 
@@ -635,12 +701,63 @@ async def recommend_fertilizer(request: FertilizerRequest):
             soil_key = "alkaline soil"
         else:
             soil_key = "neutral soil"
+    # Temperature, organic carbon and moisture are model inputs, not
+    # decoration: they are what separates compost from a generic NPK answer.
+    temperature = humidity = None
+    try:
+        rlat, rlon = _resolve_coords(request.district, request.lat,
+                                     request.lon, request.mode or "auto",
+                                     state=request.state)
+        temperature, humidity, _rainfall = _weather_or_default(rlat, rlon)
+    except Exception:  # noqa: BLE001 - weather must never block a soil test
+        temperature = humidity = None
+    try:
+        extras = fertilizer_extra_inputs(
+            request.district, request.state, request.lat, request.lon,
+            temperature=temperature, humidity=humidity)
+    except Exception:  # noqa: BLE001
+        extras = None
+
     try:
         result = dataset_recommend_fertilizer(
-            dataset_crop, soil_key, n, p, k, ph, top_k=request.top_k)
+            dataset_crop, soil_key, n, p, k, ph, top_k=request.top_k,
+            extras=extras)
     except Exception as e:  # noqa: BLE001
         print(f"[fertilizer] dataset engine failed: {e}")
         result = None
+
+    # kg/ha dose from the ICAR tables. A nutrient the farmer actually measured is
+    # classified against Table 1; one that came from the district estimate is
+    # classified from the survey's own band counts instead (see fertilizer_dose).
+    dose = None
+    try:
+        levels = {}
+        levels_source = "default_medium"
+        bands = None
+        if soil_source == "district_soil_survey":
+            bands = district_data.nutrient_bands(
+                request.district, request.state, request.lat, request.lon)
+        if bands and bands.get("levels"):
+            levels_source = "district_soil_survey"
+            for nut in ("N", "P", "K"):
+                if getattr(request, nut) is not None:
+                    continue  # a real soil test wins over the district band
+                band = bands["levels"].get(nut)
+                # No survey samples for this nutrient: stay on the printed dose
+                # rather than calling a smoothed estimate "low".
+                levels[nut] = band or "medium"
+        elif soil_source != "request":
+            # Nothing was measured: the neutral defaults are not a soil test, so
+            # they must not be classified as "low" and fertilised up.
+            for nut in ("N", "P", "K"):
+                if getattr(request, nut) is None:
+                    levels[nut] = "medium"
+        dose = fertilizer_dose.compute_dose(
+            request.crop, n, p, k, ph, levels=levels,
+            levels_source=levels_source)
+    except Exception as e:  # noqa: BLE001 - the ranking must survive this
+        print(f"[fertilizer] dose engine failed: {e}")
+        dose = None
 
     if result is None or len(result) == 0:
         payload = _rule_based_fertilizer(request.crop, n, p, k, ph)
@@ -665,7 +782,9 @@ async def recommend_fertilizer(request: FertilizerRequest):
             "crop": request.crop,
             "soil": request.soil,
             "source": "dataset",
+            "model_inputs": extras,
         }
+    payload["dose"] = dose
     # ICAR retrieval + LLM advisory on top of the deterministic match. The
     # cosine/rule answer is always returned; this adds cited evidence.
     payload.update(_icar_advisory(request, n, p, k, ph,
@@ -673,14 +792,32 @@ async def recommend_fertilizer(request: FertilizerRequest):
     return payload
 
 
+# The advisory is prose generated by an LLM, so two identical soil tests used to
+# get two different paragraphs - and every repeat spent quota. Answers are
+# memoised on exactly the inputs that shape them, which makes the endpoint
+# deterministic for a given question and stops a double-tap costing two calls.
+_ICAR_ADVISORY_CACHE: "OrderedDict[tuple, Dict[str, Any]]" = OrderedDict()
+_ICAR_ADVISORY_LIMIT = 256
+
+
 def _icar_advisory(request: "FertilizerRequest", n: float, p: float, k: float,
                    ph: float, fertilizers: List[str]) -> Dict[str, Any]:
     """ICAR passages (and, when a key is set, the written advisory)."""
+    key = (
+        (request.crop or "").strip().lower(),
+        (request.soil or "").strip().lower(),
+        round(float(n), 1), round(float(p), 1), round(float(k), 1),
+        round(float(ph), 1),
+        tuple(fertilizers),
+    )
+    cached = _ICAR_ADVISORY_CACHE.get(key)
+    if cached is not None:
+        return dict(cached)
     try:
         rag = fertilizer_rag.advisory(
             request.crop, request.soil or "", float(n), float(p), float(k),
             float(ph), fertilizers)
-        return {
+        out = {
             "icar_context": rag.get("sources") or [],
             "icar_advice": rag.get("advice"),
             "icar_provider": rag.get("provider"),
@@ -691,6 +828,13 @@ def _icar_advisory(request: "FertilizerRequest", n: float, p: float, k: float,
         return {"icar_context": [], "icar_advice": None, "icar_provider": None,
                 "icar_note": f"ICAR layer unavailable ({type(exc).__name__}).",
                 "icar_retrieval": None}
+    # Only successful advice is cached: a 429 or a missing key must be retried
+    # on the next request rather than frozen for the process lifetime.
+    if out.get("icar_advice"):
+        _ICAR_ADVISORY_CACHE[key] = out
+        while len(_ICAR_ADVISORY_CACHE) > _ICAR_ADVISORY_LIMIT:
+            _ICAR_ADVISORY_CACHE.popitem(last=False)
+    return dict(out)
 
 
 @app.get("/fertilizer/icar")
@@ -1151,8 +1295,16 @@ async def single_prediction(district: str, commodity: str,
         raise HTTPException(
             status_code=404, detail=f"No mandi data for {commodity} in {district}")
     e = entry[0]
-    mape = e.get("mape", 8.0)
-    confidence = round(max(50.0, min(95.0, 100.0 - mape * 2.0)), 1)
+    # Confidence comes from the rolling-origin backtest. When that backtest could
+    # not run (short series) the error is unknown, so no confidence figure is
+    # invented for the card: it reports null and says why.
+    mape = e.get("mape")
+    if mape is None:
+        confidence = None
+        confidence_basis = "not measured: too little history to back-test"
+    else:
+        confidence = round(max(50.0, min(95.0, 100.0 - float(mape) * 2.0)), 1)
+        confidence_basis = f"rolling-origin back-test, MAPE {float(mape):.1f}%"
     month = datetime.now().strftime("%B")
     band_pct = (e["ci_high_14d"] - e["ci_low_14d"]) / max(e["predicted_price_14d"], 1) * 100
     supply = ("stable" if band_pct < 12
@@ -1180,6 +1332,7 @@ async def single_prediction(district: str, commodity: str,
         "events": e.get("events"),
         "data_quality": e.get("data_quality"),
         "confidence": confidence,
+        "confidence_basis": confidence_basis,
         "mape": mape,
         "history_last": e.get("history_last"),
         "stale_days": e.get("stale_days", 0),

@@ -74,6 +74,11 @@ export interface CropEntry {
   yield_t_ha?: [number, number] | null;
   /** yield (t/ha) × 10 × ₹/quintal — revenue before input costs. */
   gross_return_per_ha?: number | null;
+  /** ICAR dose × the manual's 2021 fertiliser prices; fertiliser only. */
+  fertiliser_cost_per_ha?: number | null;
+  /** gross return minus that fertiliser bill — not profit. */
+  margin_after_fertiliser_per_ha?: number | null;
+  cost_basis?: string | null;
   [key: string]: unknown;
 }
 

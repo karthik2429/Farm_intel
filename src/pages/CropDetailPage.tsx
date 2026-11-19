@@ -26,6 +26,7 @@ import { CropThumb } from '@/components/ui-kit/PriceCard';
 import { Button } from '@/components/ui-kit/form';
 import { getCropInfo, getMarketHistory, type CropInfo, type MarketHistory } from '@/lib/marketApi';
 import type { CropEntry } from '@/lib/apiTypes';
+import { mapCropName } from '@/lib/cropMap';
 import { cn } from '@/lib/utils';
 
 /**
@@ -64,10 +65,11 @@ const CropDetailPage: React.FC = () => {
       })
       .catch(() => !cancelled && setInfoByCrop(Object.fromEntries(names.map((n) => [n, null]))));
 
+    // "Ragi (Finger Millet)" is a model label, not an AGMARKNET commodity:
+    // strip it to "Ragi" (and rice to Paddy) or the history comes back empty.
     Promise.all(
       names.map(async (n) => {
-        const mapped = n.toLowerCase() === 'rice' ? 'Paddy' : n;
-        const h = await getMarketHistory(mapped, district, 60).catch(() => null);
+        const h = await getMarketHistory(mapCropName(n), district, 60).catch(() => null);
         return [n, h] as const;
       }),
     )
@@ -153,6 +155,8 @@ const CropDetailPage: React.FC = () => {
       regionShare: factor(crop.region_share),
       marketScore: factor(crop.market_score),
       grossPerHa: factor(crop.gross_return_per_ha),
+      fertiliserCost: factor(crop.fertiliser_cost_per_ha),
+      marginPerHa: factor(crop.margin_after_fertiliser_per_ha),
       marketScope:
         typeof crop.market_price_scope === 'string' ? crop.market_price_scope : null,
       marketDate:
@@ -316,6 +320,32 @@ const CropDetailPage: React.FC = () => {
                               crop.grossPerHa != null
                                 ? `yield × ${crop.marketScope === 'district' ? 'district' : 'state-wide'} mandi price${crop.marketDate ? ` · ${shortDate(crop.marketDate)}` : ''} · before input costs`
                                 : 'needs both a yield band and a mandi price'
+                            }
+                          />
+                          <Factor
+                            label="Fertiliser cost per hectare"
+                            value={
+                              crop.fertiliserCost != null
+                                ? `₹${Math.round(crop.fertiliserCost).toLocaleString('en-IN')}`
+                                : '--'
+                            }
+                            note={
+                              crop.fertiliserCost != null
+                                ? 'ICAR dose × the manual\u2019s 2021 prices · fertiliser only'
+                                : 'no ICAR dose row for this crop'
+                            }
+                          />
+                          <Factor
+                            label="Margin after fertiliser"
+                            value={
+                              crop.marginPerHa != null
+                                ? `₹${Math.round(crop.marginPerHa).toLocaleString('en-IN')}`
+                                : '--'
+                            }
+                            note={
+                              crop.marginPerHa != null
+                                ? 'gross return minus the fertiliser bill · excludes seed, labour, machinery'
+                                : 'needs a gross return and a priceable dose'
                             }
                           />
                         </div>

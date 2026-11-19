@@ -148,7 +148,10 @@ export async function getSinglePrediction(
   district: string, 
   commodity: string, 
   market: string): Promise<PricePrediction & {
-  confidence: number;
+  /** Null when the back-test could not run; never a fabricated figure. */
+  confidence: number | null;
+  confidence_basis?: string | null;
+  mape?: number | null;
   factors: {
     season: string;
     supply_pressure: string;

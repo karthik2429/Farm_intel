@@ -75,7 +75,7 @@
       "case": "spoken direction matches the model",
       "dimension": "grounding",
       "passed": true,
-      "detail": "model=+5.72% reply='Banana is \u20b95,000 today. The 14-day model expects +5.7% (0.5% error on backtests).'"
+      "detail": "model=+5.73% reply='Banana is \u20b95,000 today. The 14-day model expects +5.7% (0.5% error on backtests).'"
     },
     {
       "case": "stated error rate is the backtest MAPE",

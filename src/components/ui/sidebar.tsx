@@ -531,10 +531,16 @@ const SidebarMenuSkeleton = React.forwardRef<
     showIcon?: boolean;
   }
 >(({ className, showIcon = false, ...props }, ref) => {
-  // Random width between 50 to 90%.
+  // Varied width between 50 and 90%, derived from the id instead of
+  // Math.random() so a re-render does not reshuffle the placeholder.
   const width = React.useMemo(() => {
-    return `${Math.floor(Math.random() * 40) + 50}%`;
-  }, []);
+    const seed = String(props.id ?? 'menu-skeleton');
+    let hash = 0;
+    for (let i = 0; i < seed.length; i += 1) {
+      hash = (hash * 31 + seed.charCodeAt(i)) % 41;
+    }
+    return `${50 + hash}%`;
+  }, [props.id]);
 
   return (
     <div

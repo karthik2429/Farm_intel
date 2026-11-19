@@ -152,7 +152,10 @@ def _openai_style_chat(
     body: Dict[str, Any] = {
         "model": model,
         "messages": messages,
-        "temperature": 0.3,
+        # Greedy decoding: the same question and the same retrieved passages
+        # must produce the same advice, so a farmer who re-opens a screen is not
+        # shown a different answer than the one they acted on.
+        "temperature": 0.0,
         "max_tokens": settings.chat_max_output_tokens,
     }
     if tools:
@@ -267,7 +270,7 @@ def _gemini_chat(
     body: Dict[str, Any] = {
         "contents": contents,
         "generationConfig": {
-            "temperature": 0.3,
+            "temperature": 0.0,
             "maxOutputTokens": max(max_output_tokens or 0,
                                    settings.chat_max_output_tokens, 900),
             "thinkingConfig": {"thinkingLevel": "low"},

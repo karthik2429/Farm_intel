@@ -755,15 +755,73 @@ def plan_two_season_rotation(
 
 # ------------------ FERTILIZER RECOMMENDATION ------------------
 
-def recommend_fertilizer(crop, soil, n, p, k, ph, top_k=5):
+def fertilizer_extra_inputs(district=None, state=None, lat=None, lon=None,
+                           temperature=None, humidity=None):
+    """The three model inputs a soil test does not carry.
+
+    The classifier is trained on temperature, organic carbon and moisture as
+    well as NPK/pH, because those are what distinguish compost from urea in
+    the dataset. Each is resolved from something the platform already holds,
+    and `sources` says which, so the endpoint can report what it actually used
+    rather than implying a laboratory measurement:
+
+        temperature  live Open-Meteo reading for the district
+        carbon       DES survey organic-carbon band shares -> weighted midpoint
+        moisture     relative humidity expressed as a 0-1 fraction
+
+    Anything unavailable falls back to the documented training defaults.
+    """
+    defaults = dict((_FERTILIZER_BUNDLE or {}).get("defaults") or {})
+    out = {
+        "temperature": float(defaults.get("temperature", 27.0)),
+        "carbon": float(defaults.get("carbon", 0.62)),
+        "moisture": round(float(defaults.get("moisture", 0.70)), 2),
+    }
+    sources = {"temperature": "default", "carbon": "default",
+               "moisture": "default"}
+
+    try:
+        if temperature is not None:
+            out["temperature"] = float(temperature)
+            sources["temperature"] = "weather"
+    except (TypeError, ValueError):
+        pass
+
+    try:
+        if humidity is not None:
+            pct = max(0.0, min(100.0, float(humidity)))
+            out["moisture"] = round(pct / 100.0, 2)
+            sources["moisture"] = "humidity"
+    except (TypeError, ValueError):
+        pass
+
+    try:
+        import district_data as dd
+        oc = dd.organic_carbon(district, state, lat, lon)
+        if oc and oc.get("value") is not None:
+            out["carbon"] = float(oc["value"])
+            out["carbon_band"] = oc.get("band")
+            sources["carbon"] = oc.get("source", "district_soil_survey")
+    except Exception as e:  # noqa: BLE001 - carbon is an input, not a dependency
+        print(f"[fertilizer] carbon estimate unavailable: {e}")
+
+    out["sources"] = sources
+    return out
+
+
+def recommend_fertilizer(crop, soil, n, p, k, ph, top_k=5, extras=None):
     """Ranked fertilisers for this crop, soil and soil test.
 
     Uses the trained classifier in `models/fertilizer_model.pkl` when present
-    (see train_fertilizer_model.py). It reads the columns the endpoint can
-    actually supply - N, P, K, pH, soil class, crop - and beats the cosine
-    retrieval it replaces by a wide margin (0.79 vs 0.56 accuracy on the
-    shipped dataset). The old retrieval stays as the fallback so a checkout
-    without the bundle keeps working.
+    (see train_fertilizer_model.py). It reads everything the endpoint can
+    supply - N, P, K, pH, soil class, crop, plus temperature, organic carbon
+    and moisture - and beats the cosine retrieval it replaces by a wide margin
+    (0.93 vs 0.56 accuracy on the shipped dataset). The old retrieval stays as
+    the fallback so a checkout without the bundle keeps working.
+
+    `extras` is the dict from `fertilizer_extra_inputs`; when it is omitted the
+    model falls back to the training defaults, which keeps direct callers
+    (tests, notebooks) working unchanged.
 
     Returns a DataFrame with Fertilizer / Similarity / Remark columns, which is
     the shape the endpoint and the page already use.
@@ -772,7 +830,8 @@ def recommend_fertilizer(crop, soil, n, p, k, ph, top_k=5):
     soil = soil.lower()
 
     if _FERTILIZER_BUNDLE:
-        rows = _fertilizer_model_rows(crop, soil, n, p, k, ph, top_k)
+        rows = _fertilizer_model_rows(crop, soil, n, p, k, ph, top_k,
+                                      extras=extras)
         if rows is not None:
             return rows
 
@@ -796,7 +855,7 @@ def recommend_fertilizer(crop, soil, n, p, k, ph, top_k=5):
     return result.head(top_k)
 
 
-def _fertilizer_model_rows(crop, soil, n, p, k, ph, top_k):
+def _fertilizer_model_rows(crop, soil, n, p, k, ph, top_k, extras=None):
     """Classifier path: probability-ranked fertilisers, dataset remarks.
 
     `Similarity` is now the model's probability for that fertiliser rather
@@ -810,13 +869,29 @@ def _fertilizer_model_rows(crop, soil, n, p, k, ph, top_k):
     try:
         soils = bundle["soils"]
         crops = bundle["crops"]
+        defaults = bundle.get("defaults") or {}
+        extras = extras or {}
+        # Built by column name from the bundle's own feature order, so the
+        # served vector cannot drift from the trained one.
+        values = {
+            "Nitrogen": n,
+            "Phosphorous": p,
+            "Potassium": k,
+            "PH": ph,
+            "Temperature": extras.get("temperature",
+                                      defaults.get("temperature", 27.0)),
+            "Carbon": extras.get("carbon", defaults.get("carbon", 0.62)),
+            "Moisture": extras.get("moisture", defaults.get("moisture", 0.70)),
+        }
+        numeric = bundle.get("numeric") or ["Nitrogen", "Phosphorous",
+                                           "Potassium", "PH"]
         soil_vec = [1.0 if soil == s else 0.0 for s in soils]
         if not any(soil_vec):
             # Unseen spelling ("black"/"red"): let the dataset's own soil
             # classes stay neutral rather than silently picking the first.
             soil_vec = [0.0] * len(soils)
         crop_vec = [1.0 if crop == c else 0.0 for c in crops]
-        row = np.array([[float(n), float(p), float(k), float(ph)]
+        row = np.array([[float(values[col]) for col in numeric]
                         + soil_vec + crop_vec])
         proba = bundle["model"].predict_proba(row)[0]
     except Exception as e:  # noqa: BLE001

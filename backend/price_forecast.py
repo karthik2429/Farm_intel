@@ -1081,7 +1081,12 @@ def _scope_forecast(commodity: str, scope_level: str, market: str,
         })
     p14 = traj[-1]["predicted_price"]
     change14 = traj[-1]["change_from_initial_pct"]
-    mape_safe = mape if not math.isnan(mape) else 8.0
+    # A NaN backtest means the series was too short to measure, which is not the
+    # same as an 8% error. The old fallback turned "unmeasured" into a confident
+    # "84% confidence" on the card; now the number is reported as unknown and
+    # only the wording falls back to a conservative error.
+    mape_measured = None if math.isnan(mape) else round(float(mape), 2)
+    mape_safe = mape_measured if mape_measured is not None else 8.0
     # A monthly series is labelled by month (2024-01), not by the mid-month
     # anchor date used to keep the daily grid even.
     def _hist_label(ts) -> str:
@@ -1099,7 +1104,8 @@ def _scope_forecast(commodity: str, scope_level: str, market: str,
         "history_obs": int(len(g)),
         "predicted_price_14d": p14,
         "predicted_change_pct": change14,
-        "mape": round(mape_safe, 2),
+        "mape": mape_measured,
+        "accuracy_measured": mape_measured is not None,
         "backtest_folds": folds,
         "model": model_name,
         "model_label": MODEL_LABELS.get(model_name, model_name),

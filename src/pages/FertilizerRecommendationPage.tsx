@@ -35,11 +35,61 @@ interface IcarSource {
   excerpt: string;
 }
 
+interface ModelInputs {
+  temperature?: number;
+  carbon?: number;
+  carbon_band?: string;
+  moisture?: number;
+  sources?: Record<string, string>;
+}
+
+interface DoseProduct {
+  name: string;
+  kg_per_ha: number | null;
+  supplies?: Record<string, number>;
+  role?: string;
+}
+
+interface DoseSchedule {
+  stage: string;
+  percent: number;
+  kg_per_ha: number;
+}
+
+interface DoseCitation {
+  doc: string;
+  page?: number | null;
+  claim?: string;
+}
+
+interface Dose {
+  available: boolean;
+  unit?: string;
+  /** Reason the ICAR table has no row, when available is false. */
+  reason?: string;
+  note?: string;
+  table_row?: string;
+  requirement?: Record<string, number>;
+  printed_dose?: Record<string, number>;
+  soil_status?: {
+    levels?: Record<string, string | null>;
+    ph?: string | null;
+  };
+  products?: DoseProduct[];
+  urea_schedule?: DoseSchedule[];
+  notes?: string[];
+  citations?: DoseCitation[];
+}
+
 interface FertilizerResponse {
   recommended_fertilizers?: string[];
   top_matches?: Match[];
   soil_nutrients?: Record<string, number>;
   source?: string;
+  /** kg/ha dose derived from the ICAR FertiSolver tables. */
+  dose?: Dose | null;
+  /** Temperature, organic carbon and moisture the model also reads. */
+  model_inputs?: ModelInputs | null;
   /** ICAR passages retrieved for this crop and soil, with their citations. */
   icar_context?: IcarSource[];
   /** LLM advisory grounded in those passages (null when no LLM key is set). */
@@ -48,6 +98,33 @@ interface FertilizerResponse {
   icar_note?: string | null;
   icar_retrieval?: string | null;
   error?: string;
+}
+
+/** "N 100 · P₂O₅ 40 · K₂O 25" for the requirement line. */
+function fmtNutrients(req: Record<string, number>): string {
+  const labels: Record<string, string> = { N: 'N', P2O5: 'P\u2082O\u2085', K2O: 'K\u2082O', S: 'S' };
+  return Object.entries(req)
+    .filter(([, v]) => v > 0)
+    .map(([k, v]) => `${labels[k] || k} ${Math.round(v)}`)
+    .join(' \u00b7 ');
+}
+
+/**
+ * Where the extra model inputs came from, spelled out rather than implied:
+ * the carbon figure is a survey band estimate, not a laboratory reading.
+ */
+function describeModelInputs(inputs: ModelInputs): string {
+  const sources = inputs.sources || {};
+  const parts: string[] = [];
+  if (sources.temperature === 'weather') parts.push('temperature from live weather');
+  if (sources.carbon === 'district_soil_survey') {
+    parts.push(
+      `organic carbon from the district soil survey${inputs.carbon_band ? ` (${inputs.carbon_band} band)` : ''}`,
+    );
+  }
+  if (sources.moisture === 'humidity') parts.push('moisture from relative humidity');
+  if (!parts.length) return 'Defaults used: no district weather or soil survey data was available.';
+  return `Model inputs: ${parts.join(' · ')}.`;
 }
 
 /**
@@ -229,6 +306,74 @@ const FertilizerRecommendationPage: React.FC = () => {
               </Card>
             ) : null}
 
+            {result.dose?.available ? (
+              <Card>
+                <CardLabel>How much to apply (per hectare)</CardLabel>
+                <div className="mt-2 space-y-2">
+                  {(result.dose.products || []).map((p) => (
+                    <div
+                      key={p.name}
+                      className="flex items-start justify-between gap-3 rounded-sm bg-surface-2 px-3 py-2"
+                    >
+                      <div className="min-w-0">
+                        <p className="text-[13px] font-700 text-ink">{p.name}</p>
+                        {p.role && (
+                          <p className="text-[11px] leading-snug text-ink-muted">{p.role}</p>
+                        )}
+                      </div>
+                      <p className="shrink-0 font-display text-[14px] font-800 tabular-nums text-forest">
+                        {p.kg_per_ha != null ? `${Math.round(p.kg_per_ha)} kg` : '--'}
+                      </p>
+                    </div>
+                  ))}
+
+                  {result.dose.urea_schedule?.length ? (
+                    <div className="rounded-sm border border-border px-3 py-2">
+                      <p className="text-[10.5px] font-700 uppercase tracking-[0.08em] text-ink-muted">
+                        Nitrogen splits
+                      </p>
+                      {result.dose.urea_schedule.map((s) => (
+                        <div key={s.stage} className="mt-1 flex items-start justify-between gap-3">
+                          <p className="text-[11.5px] leading-snug text-ink">{s.stage}</p>
+                          <p className="shrink-0 text-[11.5px] font-700 tabular-nums text-ink">
+                            {Math.round(s.kg_per_ha)} kg
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+
+                  {result.dose.requirement && (
+                    <p className="text-[11.5px] leading-relaxed text-ink-muted">
+                      Nutrient requirement {fmtNutrients(result.dose.requirement)} kg/ha
+                      {result.dose.table_row ? ` \u00b7 ICAR table row “${result.dose.table_row}”` : ''}
+                    </p>
+                  )}
+
+                  {(result.dose.notes || []).slice(0, 2).map((n) => (
+                    <p key={n} className="text-[11px] leading-relaxed text-ink-muted">
+                      {n}
+                    </p>
+                  ))}
+
+                  {result.dose.citations?.length ? (
+                    <p className="border-t border-border pt-2 text-[10.5px] leading-relaxed text-ink-muted">
+                      Source: {result.dose.citations[0].doc}
+                      {result.dose.citations[0].page ? ` p${result.dose.citations[0].page}` : ''};
+                      adjustment rule: ICAR-IISS INM manual p36.
+                    </p>
+                  ) : null}
+                </div>
+              </Card>
+            ) : result.dose?.reason ? (
+              <Card>
+                <CardLabel>How much to apply</CardLabel>
+                <p className="mt-2 text-[12px] leading-relaxed text-ink-muted">
+                  {result.dose.reason}. {result.dose.note}
+                </p>
+              </Card>
+            ) : null}
+
             {result.soil_nutrients && (
               <Card>
                 <CardLabel>Soil used for this answer</CardLabel>
@@ -242,6 +387,49 @@ const FertilizerRecommendationPage: React.FC = () => {
                     </div>
                   ))}
                 </div>
+              </Card>
+            )}
+
+            {result.model_inputs && (
+              <Card>
+                <CardLabel>Also used by the model</CardLabel>
+                <div className="mt-2 grid grid-cols-3 gap-2">
+                  {[
+                    {
+                      label: 'Temp',
+                      value:
+                        result.model_inputs.temperature != null
+                          ? `${Math.round(result.model_inputs.temperature)}°C`
+                          : '--',
+                    },
+                    {
+                      label: 'Carbon',
+                      value:
+                        result.model_inputs.carbon != null
+                          ? `${result.model_inputs.carbon.toFixed(2)}%`
+                          : '--',
+                    },
+                    {
+                      label: 'Moisture',
+                      value:
+                        result.model_inputs.moisture != null
+                          ? `${Math.round(result.model_inputs.moisture * 100)}%`
+                          : '--',
+                    },
+                  ].map((item) => (
+                    <div key={item.label} className="rounded-sm bg-surface-2 px-2 py-2 text-center">
+                      <p className="text-[10px] font-700 uppercase tracking-wide text-ink-muted">
+                        {item.label}
+                      </p>
+                      <p className="font-display text-[15px] font-800 tabular-nums text-ink">
+                        {item.value}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+                <p className="mt-2 text-[11px] leading-relaxed text-ink-muted">
+                  {describeModelInputs(result.model_inputs)}
+                </p>
               </Card>
             )}
 

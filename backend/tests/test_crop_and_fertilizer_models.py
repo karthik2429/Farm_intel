@@ -211,7 +211,56 @@ def test_fertilizer_model_beats_cosine_retrieval(fertilizer_bundle):
     assert m["cv_accuracy"] > m["cosine_baseline_top1"], (
         f"model {m['cv_accuracy']:.3f} does not beat retrieval "
         f"{m['cosine_baseline_top1']:.3f}")
-    assert m["cv_accuracy"] > 0.75
+    assert m["cv_accuracy"] > 0.90
+    assert m["cv_macro_f1"] > 0.88
+
+
+def test_extra_inputs_are_what_carry_the_accuracy(fertilizer_bundle):
+    """The ablation is on the record, so the gain cannot quietly evaporate."""
+    m = fertilizer_bundle["metrics"]
+    assert m["cv_accuracy"] > m["soil_only_accuracy"] + 0.08, (
+        f"temperature/carbon/moisture bought only "
+        f"{m['cv_accuracy'] - m['soil_only_accuracy']:.3f} accuracy")
+    assert fertilizer_bundle["numeric"] == [
+        "Nitrogen", "Phosphorous", "Potassium", "PH",
+        "Temperature", "Carbon", "Moisture"]
+
+
+def test_extra_inputs_come_from_real_sources():
+    """Carbon from the DES survey, temperature from weather, moisture from RH."""
+    from utils.utils import fertilizer_extra_inputs
+
+    extras = fertilizer_extra_inputs("Kolar", "Karnataka",
+                                     temperature=31.4, humidity=62)
+    assert extras["temperature"] == pytest.approx(31.4)
+    assert extras["moisture"] == pytest.approx(0.62)
+    assert extras["sources"]["temperature"] == "weather"
+    assert extras["sources"]["moisture"] == "humidity"
+    assert extras["sources"]["carbon"] == "district_soil_survey"
+    assert 0.0 < extras["carbon"] <= 1.5
+    assert extras["carbon_band"] in {"low", "medium", "high"}
+
+
+def test_extra_inputs_fall_back_to_documented_defaults():
+    """An unknown place must still answer, with defaults and a labelled source."""
+    from utils.utils import fertilizer_extra_inputs
+
+    extras = fertilizer_extra_inputs("Nowhere Nagar", "Atlantis")
+    assert extras["sources"]["carbon"] == "default"
+    assert extras["carbon"] == pytest.approx(0.62)
+    assert extras["moisture"] == pytest.approx(0.70)
+
+
+def test_endpoint_reports_which_inputs_it_used(client):
+    """The page states the carbon is a survey estimate, so it must be sent."""
+    r = client.post("/fertilizer/recommend", json={
+        "crop": "Rice", "soil": "Loamy", "N": 60, "P": 40, "K": 40,
+        "PH": 6.5, "district": "Kolar", "state": "Karnataka"})
+    assert r.status_code == 200
+    inputs = r.json()["model_inputs"]
+    assert inputs["sources"]["carbon"] in {"district_soil_survey", "default"}
+    assert 0.0 < inputs["carbon"] <= 1.5
+    assert 0.0 <= inputs["moisture"] <= 1.0
 
 
 def test_fertilizer_scores_are_probabilities(fertilizer_bundle):

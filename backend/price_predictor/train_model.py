@@ -164,9 +164,12 @@ def add_weather_features(df: pd.DataFrame, weather_cache: Dict = None) -> pd.Dat
     df["temp_max_est"] = df.apply(lambda r: get_seasonal_temp(r["state"], r["month"], True), axis=1)
     df["temp_min_est"] = df.apply(lambda r: get_seasonal_temp(r["state"], r["month"], False), axis=1)
     
-    # Rainfall estimate by season
+    # Rainfall estimate by season. Seeded so a retrain reproduces the shipped
+    # model rather than producing a slightly different one each run.
     monsoon_months = [6, 7, 8, 9]
-    df["rainfall_est"] = df["month"].apply(lambda m: np.random.gamma(2, 50) if m in monsoon_months else np.random.exponential(5))
+    rng = np.random.default_rng(42)
+    df["rainfall_est"] = df["month"].apply(
+        lambda m: rng.gamma(2, 50) if m in monsoon_months else rng.exponential(5))
     
     # Humidity
     df["humidity_est"] = df["month"].apply(lambda m: 85 if m in monsoon_months else 60)
