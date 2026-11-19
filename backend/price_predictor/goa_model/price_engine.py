@@ -33,9 +33,15 @@ def _find_data_dir() -> Path:
     candidates = []
     if env:
         candidates.append(Path(env))
-    # goa_model -> price_predictor -> backend -> Farm_intel -> project root
-    root = _GOA_DIR.parents[3]
-    candidates.append(root / "data" / "historical_prices" / "goa_merged")
+    # goa_model -> price_predictor -> backend -> Farm_intel -> project root.
+    # The climb is bounded: a deployment that ships only backend/ (or a Docker
+    # image with a shallower layout) has fewer parents, and indexing past the
+    # end used to raise IndexError at import time and take the whole API down.
+    parents = _GOA_DIR.parents
+    if len(parents) > 3:
+        candidates.append(parents[3] / "data" / "historical_prices" / "goa_merged")
+    # shipped copy next to the backend, used by the container deployment
+    candidates.append(_GOA_DIR.parents[1] / "data" / "historical_prices" / "goa_merged")
     # legacy absolute layout used during development
     candidates.append(Path.home() / "Desktop" / "Capstone copy" / "data" / "historical_prices" / "goa_merged")
     for c in candidates:

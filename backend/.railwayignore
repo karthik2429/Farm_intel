@@ -1,0 +1,13 @@
+# Files the deployed API does not need at runtime.
+# The ICAR corpus is shipped pre-extracted (data/icar/icar_corpus.json) and
+# pre-indexed (data/icar/chroma_icar), so the source PDFs (30 MB) stay out of
+# the upload; `ingest_icar_pdfs.py` can rebuild them locally when needed.
+tests/
+__pycache__/
+**/__pycache__/
+.pytest_cache/
+*.pyc
+data/icar/*.pdf
+*.zip
+.venv/
+venv/
