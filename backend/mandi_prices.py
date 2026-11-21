@@ -465,14 +465,30 @@ def _live_records(commodity: str, district: Optional[str],
     params: Dict[str, object] = {"limit": limit}
     if commodity:
         params["filters[commodity]"] = commodity
-    if district:
-        params["filters[district]"] = _district_name(district)
     if state:
         params["filters[state]"] = _state_name(state)
-    data = _live_get(params)
-    if not data:
-        return []
-    return data.get("records") or []
+    if not district:
+        data = _live_get(params)
+        return (data or {}).get("records") or []
+
+    # AGMARKNET renamed districts and its filter is an exact match, so one
+    # spelling silently returns nothing. The alias table below maps the app's
+    # current names to the older ones, but the live feed has partly moved to
+    # the new spellings: asking for "Belgaum" today returns 0 rows while
+    # "Belagavi" returns the district's trade, and Davangere is still the
+    # reverse. Ask with the name the farmer picked first, then the alias, and
+    # keep the first spelling that answers. The extra request only happens on
+    # a miss, so a healthy district still costs one call.
+    spellings: List[str] = []
+    for candidate in (district.strip(), _district_name(district)):
+        if candidate and _norm(candidate) not in {_norm(s) for s in spellings}:
+            spellings.append(candidate)
+    for spelling in spellings:
+        data = _live_get({**params, "filters[district]": spelling})
+        records = (data or {}).get("records") or []
+        if records:
+            return records
+    return []
 
 
 # ---------------------------------------------------------------------------

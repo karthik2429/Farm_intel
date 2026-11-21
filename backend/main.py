@@ -53,6 +53,10 @@ import price_factors  # noqa: E402
 import fertilizer_rag  # noqa: E402
 from config import settings, service_status  # noqa: E402
 
+# Route handlers are deliberately plain `def`, not `async def`: they call
+# blocking libraries (requests, pandas, joblib, sqlite3) and FastAPI runs sync
+# handlers in a worker thread. Declared async, one slow AGMARKNET or Open-Meteo
+# call froze the event loop and every other request - including /health - hung.
 app = FastAPI(title="FarmIntel API", version="3.0.0")
 
 app.add_middleware(
@@ -299,7 +303,7 @@ def _fill_npk_from_location(payload: FertilizerRequest):
 # ─────────────────────── Health ──────────────────────────────────────────
 
 @app.get("/health")
-async def health_check():
+def health_check():
     return {
         "status": "healthy",
         "models_loaded": list(models.keys()),
@@ -319,7 +323,7 @@ _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
 @app.post("/auth/signup")
-async def signup(payload: SignupRequest):
+def signup(payload: SignupRequest):
     """Fallback account creation when Supabase cannot send mail.
 
     The normal sign-up path is `supabase.auth.signUp` in the browser followed by
@@ -371,7 +375,7 @@ async def signup(payload: SignupRequest):
 
 
 @app.get("/model/crop")
-async def crop_model_status():
+def crop_model_status():
     """Which crop model /predict is serving, and how it scored.
 
     The numbers come from `train_crop_model.py`, so the accuracy claimed in
@@ -387,7 +391,7 @@ async def crop_model_status():
 
 
 @app.get("/config/status")
-async def config_status():
+def config_status():
     """
     Which optional services are configured. Booleans only — a key value is
     never returned. The dev-only "Setup status" panel reads this to show
@@ -437,7 +441,7 @@ def _land_suitability_context(lat: Optional[float], lon: Optional[float],
 
 
 @app.post("/predict")
-async def predict_crop(request: CropRecommendRequest):
+def predict_crop(request: CropRecommendRequest):
     """
     District-aware crop recommendation.
 
@@ -568,7 +572,7 @@ async def predict_crop(request: CropRecommendRequest):
 # ─────────────────────── Crop rotation ───────────────────────────────────
 
 @app.post("/rotation/suggestions")
-async def rotation_suggestions(request: RotationRequest):
+def rotation_suggestions(request: RotationRequest):
     """Next-crop scoring: NPK fit, crop family, disease break and district
     yield history (utils engine + master xlsx)."""
     try:
@@ -581,7 +585,7 @@ async def rotation_suggestions(request: RotationRequest):
 
 
 @app.post("/rotation/plan")
-async def rotation_plan(request: RotationPlanRequest):
+def rotation_plan(request: RotationPlanRequest):
     """
     Full 2-season plan: {season1, season2_options, soil_after_s1,
     season3_preview, warnings} — exactly what CropRotationPage renders.
@@ -734,7 +738,7 @@ def _ph_amendment(ph: float) -> Optional[dict]:
 
 
 @app.post("/fertilizer/recommend")
-async def recommend_fertilizer(request: FertilizerRequest):
+def recommend_fertilizer(request: FertilizerRequest):
     """
     Trained classifier over the dataset's crop/soil/NPK/pH labels (see
     train_fertilizer_model.py), with the pH amendment applied on top and a
@@ -899,7 +903,7 @@ def _icar_advisory(request: "FertilizerRequest", n: float, p: float, k: float,
 
 
 @app.get("/fertilizer/icar")
-async def fertilizer_icar(q: Optional[str] = None, k: int = 4):
+def fertilizer_icar(q: Optional[str] = None, k: int = 4):
     """The ICAR corpus behind the advisory: size, retrieval backend and hits."""
     try:
         stats = fertilizer_rag.corpus_stats()
@@ -913,7 +917,7 @@ async def fertilizer_icar(q: Optional[str] = None, k: int = 4):
 # ─────────────────────── Location defaults ───────────────────────────────
 
 @app.post("/location/default-npk")
-async def default_npk(request: Dict[str, Any]):
+def default_npk(request: Dict[str, Any]):
     """
     Real per-district soil defaults (DES district soil test survey) with
     live weather; falls back to sensible India-wide values only when the
@@ -998,7 +1002,7 @@ LANG_NAMES = {
 
 
 @app.post("/chat")
-async def ai_chat(request: ChatRequest, http: Request):
+def ai_chat(request: ChatRequest, http: Request):
     """
     Kisan assistant.
 
@@ -1055,7 +1059,7 @@ async def ai_chat(request: ChatRequest, http: Request):
 
 
 @app.get("/market/price")
-async def market_price(commodity: str, district: Optional[str] = None,
+def market_price(commodity: str, district: Optional[str] = None,
                        state: Optional[str] = None, strict: bool = False):
     """
     Best-effort mandi price: Goa local history, bundled district snapshot,
@@ -1096,7 +1100,7 @@ async def market_price(commodity: str, district: Optional[str] = None,
 
 
 @app.get("/market/status")
-async def market_status():
+def market_status():
     out = mandi_prices.status()
     # Backfill state for the AGMARKNET "district-wise wholesale prices monthly
     # analysis" report: how many states/crops/months are already stored.
@@ -1109,7 +1113,7 @@ async def market_status():
 
 
 @app.get("/market/coverage")
-async def market_coverage(commodity: Optional[str] = None, limit: int = 40):
+def market_coverage(commodity: Optional[str] = None, limit: int = 40):
     """
     How much REAL history exists, per commodity and market: first date, last
     date, observation count. This is what makes a forecast honest — the UI
@@ -1148,7 +1152,7 @@ async def market_coverage(commodity: Optional[str] = None, limit: int = 40):
 
 
 @app.get("/market/history")
-async def market_history(commodity: str, district: Optional[str] = None,
+def market_history(commodity: str, district: Optional[str] = None,
                          state: Optional[str] = None, days: int = 90):
     """
     Real daily mandi price series (mean modal price across markets in scope)
@@ -1232,7 +1236,7 @@ async def market_history(commodity: str, district: Optional[str] = None,
 
 
 @app.get("/weather")
-async def weather(district: Optional[str] = None, state: Optional[str] = None,
+def weather(district: Optional[str] = None, state: Optional[str] = None,
                   lat: Optional[float] = None, lon: Optional[float] = None):
     """
     Live current weather for the resolved location (Open-Meteo). Used by
@@ -1253,7 +1257,7 @@ async def weather(district: Optional[str] = None, state: Optional[str] = None,
 
 
 @app.get("/crop/info")
-async def crop_information(crops: str):
+def crop_information(crops: str):
     """Real agronomy (duration, yield, soil, pH/temp/rainfall ranges) for
     the requested crops, joined from the bundled crop master dataset and
     standard published references. Unknown crops come back flagged so the
@@ -1333,19 +1337,19 @@ def _price_guard():  # kept for /commodities + /markets backcompat
 
 
 @app.post("/predict/14day")
-async def predict_14day(request: PricePredictionRequest):
+def predict_14day(request: PricePredictionRequest):
     return _forecast_or_404(request.district, price_forecast.resolve_name(request.commodity),
                             request.market, state=request.state)
 
 
 @app.post("/predict/trajectory")
-async def predict_trajectory(request: PricePredictionRequest):
+def predict_trajectory(request: PricePredictionRequest):
     return _forecast_or_404(request.district, price_forecast.resolve_name(request.commodity),
                             request.market, days=request.days, state=request.state)
 
 
 @app.get("/predict/single")
-async def single_prediction(district: str, commodity: str,
+def single_prediction(district: str, commodity: str,
                             market: Optional[str] = "All",
                             state: Optional[str] = None):
     """Current market read derived from real data: latest observed price,
@@ -1418,7 +1422,7 @@ async def single_prediction(district: str, commodity: str,
 
 
 @app.get("/predict/factors")
-async def prediction_factors(commodity: str, district: Optional[str] = None,
+def prediction_factors(commodity: str, district: Optional[str] = None,
                              state: Optional[str] = None,
                              lat: Optional[float] = None,
                              lon: Optional[float] = None):
@@ -1438,7 +1442,7 @@ async def prediction_factors(commodity: str, district: Optional[str] = None,
 
 
 @app.get("/commodities")
-async def get_commodities(district: Optional[str] = None,
+def get_commodities(district: Optional[str] = None,
                          state: Optional[str] = None,
                          predictable: bool = False,
                          strict: bool = False,
@@ -1462,7 +1466,7 @@ async def get_commodities(district: Optional[str] = None,
 
 
 @app.get("/markets")
-async def get_markets(district: Optional[str] = None,
+def get_markets(district: Optional[str] = None,
                       state: Optional[str] = None,
                       refresh: bool = False):
     """Mandis in a district (or everywhere).
