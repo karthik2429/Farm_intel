@@ -22,6 +22,24 @@ import { cn } from '@/lib/utils';
 import farmHero from '@/assets/hero-farm.jpg';
 
 type Tab = 'login' | 'signup';
+type Step = 'form' | 'code' | 'newPassword';
+/** Which Supabase email the pending code belongs to. */
+type Purpose = 'signup' | 'recovery';
+
+/** Supabase's own wording is cryptic; say what the farmer can do instead. */
+const explain = (raw: string): string => {
+  const m = (raw || '').toLowerCase();
+  if (m.includes('rate limit') || m.includes('too many')) {
+    return 'Email delivery is rate limited right now. Try again in a few minutes, or log in with your password.';
+  }
+  if (m.includes('invalid login credentials')) {
+    return 'Wrong email or password.';
+  }
+  if (m.includes('user already registered') || m.includes('already been registered')) {
+    return 'That email already has an account — log in with your password.';
+  }
+  return raw;
+};
 
 const LoginPage: React.FC = () => {
   const { t } = useLanguage();
@@ -29,22 +47,43 @@ const LoginPage: React.FC = () => {
   const navigate = useNavigate();
 
   const [tab, setTab] = React.useState<Tab>('login');
+  const [recovering, setRecovering] = React.useState(false);
+  const [step, setStep] = React.useState<Step>('form');
+  const [purpose, setPurpose] = React.useState<Purpose>('signup');
   const [email, setEmail] = React.useState('');
+  const [password, setPassword] = React.useState('');
+  const [newPassword, setNewPassword] = React.useState('');
   const [otp, setOtp] = React.useState(['', '', '', '', '', '']);
-  const [step, setStep] = React.useState<'email' | 'code'>('email');
   const [busy, setBusy] = React.useState(false);
   const [resendIn, setResendIn] = React.useState(0);
   const [attempts, setAttempts] = React.useState(0);
-  const [useCode, setUseCode] = React.useState(false);
-  const [password, setPassword] = React.useState('');
+  // A recovery link signs the user in before they have set a new password, so
+  // navigation has to be held back until updateUser() succeeds.
+  const holdNav = React.useRef(false);
   const inputs = React.useRef<(HTMLInputElement | null)[]>([]);
+
+  const finish = () => {
+    holdNav.current = false;
+    const cached = readCachedProfile();
+    navigate(cached?.onboarding_complete ? '/home' : '/onboarding', { replace: true });
+  };
 
   // Already signed in → straight to the app (or onboarding when incomplete).
   React.useEffect(() => {
-    if (authLoading || !user) return;
+    if (authLoading || !user || holdNav.current) return;
+    if (step === 'newPassword') return;
     const cached = readCachedProfile();
     navigate(cached?.onboarding_complete ? '/home' : '/onboarding', { replace: true });
-  }, [user, authLoading, navigate]);
+  }, [user, authLoading, step, navigate]);
+
+  // A "reset password" email link lands on /#access_token=…&type=recovery:
+  // keep the user here so they can choose a new password.
+  React.useEffect(() => {
+    if (window.location.hash.includes('type=recovery')) {
+      holdNav.current = true;
+      setStep('newPassword');
+    }
+  }, []);
 
   React.useEffect(() => {
     if (resendIn <= 0) return;
@@ -53,33 +92,64 @@ const LoginPage: React.FC = () => {
   }, [resendIn]);
 
   const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
+  const redirectTo = `${window.location.origin}/`;
 
+  /** Create the account on the backend when Supabase cannot send mail. */
+  const createWithoutEmail = async (): Promise<void> => {
+    const res = await fetch(`${env.apiBaseUrl}/auth/signup`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: email.trim(), password }),
+    });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { detail?: string };
+      toast.error(body.detail || 'Could not create the account');
+      return;
+    }
+    const { error } = await supabase!.auth.signInWithPassword({
+      email: email.trim(),
+      password,
+    });
+    if (error) {
+      toast.error(explain(error.message));
+      return;
+    }
+    toast.success('Account created');
+    finish();
+  };
+
+  /** One-time code: confirms a new account, or authorises a password reset. */
   const sendCode = async () => {
-    if (!supabaseConfigured || !supabase) {
-      toast.error('Sign-in is not configured: set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.');
-      return;
-    }
-    if (!emailValid) {
-      toast.error('Enter a valid email address');
-      return;
-    }
+    if (!supabase) return;
     setBusy(true);
     try {
-      const { error } = await supabase.auth.signInWithOtp({
-        email: email.trim(),
-        options: { shouldCreateUser: true },
-      });
-      if (error) {
-        toast.error(error.message || 'Could not send the code');
-        return;
+      if (purpose === 'signup') {
+        const { error } = await supabase.auth.resend({
+          type: 'signup',
+          email: email.trim(),
+          options: { emailRedirectTo: redirectTo },
+        });
+        if (error) {
+          toast.error(explain(error.message));
+          return;
+        }
+        toast.success('New code sent — check your inbox');
+      } else {
+        const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+          redirectTo,
+        });
+        if (error) {
+          toast.error(explain(error.message));
+          return;
+        }
+        toast.success('New reset code sent — check your inbox');
       }
-      setStep('code');
       setResendIn(30);
       setAttempts(0);
-      toast.success('Code sent — check your inbox');
+      setOtp(['', '', '', '', '', '']);
       setTimeout(() => inputs.current[0]?.focus(), 80);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Network error while sending the code');
+      toast.error(err instanceof Error ? err.message : 'Network error');
     } finally {
       setBusy(false);
     }
@@ -96,25 +166,59 @@ const LoginPage: React.FC = () => {
       return;
     }
     setBusy(true);
+    if (purpose === 'recovery') holdNav.current = true;
     try {
-      const { error } = await supabase.auth.verifyOtp({ email: email.trim(), token: code, type: 'email' });
+      const { error } = await supabase.auth.verifyOtp({
+        email: email.trim(),
+        token: code,
+        type: purpose === 'signup' ? 'signup' : 'recovery',
+      });
       if (error) {
+        holdNav.current = false;
         setAttempts((a) => a + 1);
-        toast.error(error.message || 'Invalid or expired code');
+        toast.error(explain(error.message));
         setOtp(['', '', '', '', '', '']);
         inputs.current[0]?.focus();
         return;
       }
-      const cached = readCachedProfile();
-      navigate(cached?.onboarding_complete ? '/home' : '/onboarding', { replace: true });
+      if (purpose === 'recovery') {
+        setStep('newPassword');
+        toast.success('Code accepted — choose a new password');
+        return;
+      }
+      toast.success('Email confirmed');
+      finish();
     } catch (err) {
+      holdNav.current = false;
       toast.error(err instanceof Error ? err.message : 'Verification failed');
     } finally {
       setBusy(false);
     }
   };
 
-  const passwordAuth = async () => {
+  const saveNewPassword = async () => {
+    if (!supabase) return;
+    if (newPassword.length < 8) {
+      toast.error('Password must be at least 8 characters');
+      return;
+    }
+    setBusy(true);
+    try {
+      const { error } = await supabase.auth.updateUser({ password: newPassword });
+      if (error) {
+        toast.error(explain(error.message));
+        return;
+      }
+      toast.success('Password updated');
+      finish();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not save the password');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const submitForm = async () => {
     if (!supabaseConfigured || !supabase) {
       toast.error('Sign-in is not configured: set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.');
       return;
@@ -123,26 +227,72 @@ const LoginPage: React.FC = () => {
       toast.error('Enter a valid email address');
       return;
     }
-    if (password.length < 8) {
-      toast.error('Password must be at least 8 characters');
-      return;
-    }
     setBusy(true);
     try {
-      if (tab === 'signup') {
-        // Accounts are created confirmed by the backend, because Supabase's
-        // built-in mailer is rate limited to a couple of messages per hour.
-        const res = await fetch(`${env.apiBaseUrl}/auth/signup`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email: email.trim(), password }),
+      // ---- forgot password: mail a one-time code ------------------------
+      if (recovering) {
+        const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+          redirectTo,
         });
-        if (!res.ok) {
-          const body = (await res.json().catch(() => ({}))) as { detail?: string };
-          toast.error(body.detail || 'Could not create the account');
+        if (error) {
+          toast.error(explain(error.message));
           return;
         }
+        setPurpose('recovery');
+        setStep('code');
+        setResendIn(30);
+        setAttempts(0);
+        toast.success('Reset code sent — check your inbox');
+        setTimeout(() => inputs.current[0]?.focus(), 80);
+        return;
       }
+
+      // ---- create account: Supabase emails a confirmation code ---------
+      if (tab === 'signup') {
+        if (password.length < 8) {
+          toast.error('Password must be at least 8 characters');
+          return;
+        }
+        const { data, error } = await supabase.auth.signUp({
+          email: email.trim(),
+          password,
+          options: { emailRedirectTo: redirectTo },
+        });
+        if (!error) {
+          // Confirmation switched off in Supabase: already signed in.
+          if (data.session) {
+            finish();
+            return;
+          }
+          // Supabase hides existing users behind an empty identity list.
+          if ((data.user?.identities?.length ?? 0) === 0) {
+            toast.error('That email already has an account — log in with your password.');
+            setTab('login');
+            return;
+          }
+          setPurpose('signup');
+          setStep('code');
+          setResendIn(30);
+          setAttempts(0);
+          toast.success('Code sent — check your inbox to confirm the account');
+          setTimeout(() => inputs.current[0]?.focus(), 80);
+          return;
+        }
+        const mailProblem =
+          error.status === 429 ||
+          /rate limit|smtp|confirmation|sending|email/i.test(error.message);
+        if (!mailProblem) {
+          toast.error(explain(error.message));
+          return;
+        }
+        // The built-in mailer is quota-limited, so a blocked email must not
+        // block sign-up: the backend creates the account already confirmed.
+        toast.info('Email delivery is limited right now — confirming the account directly.');
+        await createWithoutEmail();
+        return;
+      }
+
+      // ---- normal login: email + password ------------------------------
       const { error } = await supabase.auth.signInWithPassword({
         email: email.trim(),
         password,
@@ -151,12 +301,11 @@ const LoginPage: React.FC = () => {
         toast.error(
           error.message === 'Invalid login credentials'
             ? 'Wrong email or password. New here? Use "Create account".'
-            : error.message,
+            : explain(error.message),
         );
         return;
       }
-      const cached = readCachedProfile();
-      navigate(cached?.onboarding_complete ? '/home' : '/onboarding', { replace: true });
+      finish();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Network error while signing in');
     } finally {
@@ -169,15 +318,17 @@ const LoginPage: React.FC = () => {
       toast.error('Google sign-in is not configured: set the Supabase URL and anon key.');
       return;
     }
-    if (!env.enableGoogleLogin) {
-      toast.error('Google sign-in is disabled in this build');
-      return;
-    }
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
-      options: { redirectTo: `${window.location.origin}/home` },
+      options: { redirectTo: redirectTo },
     });
-    if (error) toast.error(error.message || 'Google sign-in is not enabled in Supabase yet');
+    if (error) {
+      toast.error(
+        /provider is not enabled/i.test(error.message)
+          ? 'Google sign-in is not enabled on the Supabase project yet.'
+          : error.message,
+      );
+    }
   };
 
   const setDigit = (i: number, value: string) => {
@@ -198,6 +349,17 @@ const LoginPage: React.FC = () => {
     const joined = next.join('');
     if (joined.length === 6) void verify(joined);
   };
+
+  const title = recovering
+    ? t('resetPassword')
+    : tab === 'login'
+      ? t('logIn')
+      : t('createAccount');
+  const subtitle = recovering
+    ? 'We email a 6-digit code, then you choose a new password.'
+    : tab === 'login'
+      ? 'Log in with your email and password.'
+      : 'Your email and a password — we send a one-time code to confirm it.';
 
   return (
     <div className="grid min-h-screen lg:grid-cols-2">
@@ -276,35 +438,32 @@ const LoginPage: React.FC = () => {
 
             <div className="rounded-lg border border-border bg-surface p-5 shadow-md sm:p-6">
               <div className="mb-5">
-                <h2 className="font-display text-[21px] font-800 tracking-tight">
-                  {tab === 'login' ? t('logIn') : t('createAccount')}
-                </h2>
-                <p className="mt-0.5 text-[12.5px] text-ink-muted">
-                  {tab === 'login'
-                    ? 'Use your email and password, or a one-time email code.'
-                    : 'Takes 10 seconds — an email and a password.'}
-                </p>
+                <h2 className="font-display text-[21px] font-800 tracking-tight">{title}</h2>
+                <p className="mt-0.5 text-[12.5px] text-ink-muted">{subtitle}</p>
               </div>
 
               {/* tabs */}
-              <div className="mb-5 grid grid-cols-2 rounded-full border border-border bg-surface-2 p-1">
-                {(['login', 'signup'] as Tab[]).map((v) => (
-                  <button
-                    key={v}
-                    type="button"
-                    onClick={() => {
-                      setTab(v);
-                      setStep('email');
-                    }}
-                    className={cn(
-                      'h-8 rounded-full text-[12.5px] font-600 transition-all',
-                      tab === v ? 'bg-surface text-ink shadow-sm' : 'text-ink-muted',
-                    )}
-                  >
-                    {v === 'login' ? t('logIn') : t('createAccount')}
-                  </button>
-                ))}
-              </div>
+              {!recovering && (
+                <div className="mb-5 grid grid-cols-2 rounded-full border border-border bg-surface-2 p-1">
+                  {(['login', 'signup'] as Tab[]).map((v) => (
+                    <button
+                      key={v}
+                      type="button"
+                      onClick={() => {
+                        setTab(v);
+                        setStep('form');
+                        setOtp(['', '', '', '', '', '']);
+                      }}
+                      className={cn(
+                        'h-8 rounded-full text-[12.5px] font-600 transition-all',
+                        tab === v ? 'bg-surface text-ink shadow-sm' : 'text-ink-muted',
+                      )}
+                    >
+                      {v === 'login' ? t('logIn') : t('createAccount')}
+                    </button>
+                  ))}
+                </div>
+              )}
 
               {!supabaseConfigured && (
                 <div className="mb-4 rounded-sm border border-harvest/40 bg-harvest/10 p-3">
@@ -325,28 +484,32 @@ const LoginPage: React.FC = () => {
                 </div>
               )}
 
-              <button
-                type="button"
-                onClick={google}
-                className="press flex h-12 w-full items-center justify-center gap-2.5 rounded-sm border border-border bg-surface text-[14px] font-600 shadow-sm hover:bg-surface-2"
-              >
-                <GoogleMark />
-                {t('googleAccount')}
-              </button>
+              {step === 'form' && !recovering && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => void google()}
+                    className="press flex h-12 w-full items-center justify-center gap-2.5 rounded-sm border border-border bg-surface text-[14px] font-600 shadow-sm hover:bg-surface-2"
+                  >
+                    <GoogleMark />
+                    {t('googleAccount')}
+                  </button>
 
-              <div className="my-4 flex items-center gap-3">
-                <span className="h-px flex-1 bg-border" />
-                <span className="text-[10.5px] font-600 uppercase tracking-[0.1em] text-ink-muted">
-                  {t('orContinueWith')}
-                </span>
-                <span className="h-px flex-1 bg-border" />
-              </div>
+                  <div className="my-4 flex items-center gap-3">
+                    <span className="h-px flex-1 bg-border" />
+                    <span className="text-[10.5px] font-600 uppercase tracking-[0.1em] text-ink-muted">
+                      {t('orContinueWith')}
+                    </span>
+                    <span className="h-px flex-1 bg-border" />
+                  </div>
+                </>
+              )}
 
-              {step === 'email' ? (
+              {step === 'form' && (
                 <form
                   onSubmit={(e) => {
                     e.preventDefault();
-                    void (useCode ? sendCode() : passwordAuth());
+                    void submitForm();
                   }}
                   className="space-y-3"
                 >
@@ -368,7 +531,7 @@ const LoginPage: React.FC = () => {
                     </div>
                   </label>
 
-                  {!useCode && (
+                  {!recovering && (
                     <label className="block">
                       <span className="mb-1 block text-[11px] font-600 uppercase tracking-[0.07em] text-ink-muted">
                         {t('password')}
@@ -389,35 +552,68 @@ const LoginPage: React.FC = () => {
 
                   <button
                     type="submit"
-                    disabled={busy || !emailValid || (!useCode && password.length < 8)}
+                    disabled={busy || !emailValid || (!recovering && password.length < 8)}
                     className="press flex h-12 w-full items-center justify-center gap-2 rounded-sm bg-leaf text-[14.5px] font-700 text-white shadow-glow disabled:opacity-50"
                     style={{ background: 'var(--grad-leaf)' }}
                   >
                     {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
                     {busy
-                      ? useCode ? 'Sending…' : 'Signing in…'
-                      : useCode ? t('sendOtp') : tab === 'login' ? t('signIn') : t('createAccount')}
+                      ? recovering ? 'Sending…' : tab === 'login' ? 'Signing in…' : 'Creating…'
+                      : recovering ? t('sendResetCode') : tab === 'login' ? t('signIn') : t('createAccount')}
                     {!busy && <ArrowRight className="h-4 w-4" strokeWidth={2.2} />}
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setUseCode((v) => !v);
-                      setStep('email');
-                      setOtp(['', '', '', '', '', '']);
-                    }}
-                    className="mx-auto block text-[11.5px] font-600 text-primary hover:underline"
-                  >
-                    {useCode ? t('usePassword') : t('useEmailCode')}
-                  </button>
+
+                  <div className="flex items-center justify-between text-[11.5px]">
+                    {recovering ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setRecovering(false);
+                          setStep('form');
+                        }}
+                        className="font-600 text-primary hover:underline"
+                      >
+                        ← {t('backToSignIn')}
+                      </button>
+                    ) : tab === 'login' ? (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setRecovering(true);
+                            setStep('form');
+                          }}
+                          className="font-600 text-primary hover:underline"
+                        >
+                          {t('forgotPassword')}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setTab('signup')}
+                          className="font-600 text-ink-muted hover:text-ink"
+                        >
+                          {t('createAccount')}
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => setTab('login')}
+                        className="font-600 text-primary hover:underline"
+                      >
+                        {t('alreadyHaveAccount')}
+                      </button>
+                    )}
+                  </div>
+
                   <p className="flex items-center justify-center gap-1.5 text-[11px] text-ink-muted">
                     <Lock className="h-3 w-3" strokeWidth={2} />
-                    {useCode
-                      ? `Passwordless. Only ${env.enableEmailOtp ? 'email' : 'Google'} sign-in is enabled.`
-                      : 'Your password goes only to the sign-in service — it is never emailed.'}
+                    Your password goes only to Supabase — it is never emailed.
                   </p>
                 </form>
-              ) : (
+              )}
+
+              {step === 'code' && (
                 <div className="space-y-3">
                   <p className="text-[12.5px] text-ink-muted">
                     {t('enterEmailOtp')} sent to <span className="font-600 text-ink">{email}</span>
@@ -454,10 +650,14 @@ const LoginPage: React.FC = () => {
                     {t('verifyOtp')}
                   </button>
 
+                  <p className="text-center text-[11px] leading-relaxed text-ink-muted">
+                    The email also contains a link — clicking it works the same way.
+                  </p>
+
                   <div className="flex items-center justify-between text-[11.5px]">
                     <button
                       type="button"
-                      disabled={resendIn > 0}
+                      disabled={resendIn > 0 || busy}
                       onClick={() => void sendCode()}
                       className="font-600 text-primary disabled:text-ink-muted"
                     >
@@ -466,7 +666,8 @@ const LoginPage: React.FC = () => {
                     <button
                       type="button"
                       onClick={() => {
-                        setStep('email');
+                        holdNav.current = false;
+                        setStep('form');
                         setOtp(['', '', '', '', '', '']);
                       }}
                       className="font-600 text-ink-muted hover:text-ink"
@@ -475,6 +676,47 @@ const LoginPage: React.FC = () => {
                     </button>
                   </div>
                 </div>
+              )}
+
+              {step === 'newPassword' && (
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    void saveNewPassword();
+                  }}
+                  className="space-y-3"
+                >
+                  <p className="text-[12.5px] text-ink-muted">
+                    Code verified. Choose a new password for{' '}
+                    <span className="font-600 text-ink">{email || 'your account'}</span>.
+                  </p>
+                  <label className="block">
+                    <span className="mb-1 block text-[11px] font-600 uppercase tracking-[0.07em] text-ink-muted">
+                      {t('newPassword')}
+                    </span>
+                    <div className="flex h-[52px] items-center gap-2 rounded-sm border border-border bg-surface-2 px-3 focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/20">
+                      <Lock className="h-4 w-4 text-ink-muted" strokeWidth={1.9} />
+                      <input
+                        type="password"
+                        autoComplete="new-password"
+                        value={newPassword}
+                        onChange={(e) => setNewPassword(e.target.value)}
+                        placeholder={t('enterPassword')}
+                        className="h-full w-full bg-transparent text-[15px] outline-none placeholder:text-ink-muted/60"
+                      />
+                    </div>
+                  </label>
+                  <button
+                    type="submit"
+                    disabled={busy || newPassword.length < 8}
+                    className="press flex h-12 w-full items-center justify-center gap-2 rounded-sm text-[14.5px] font-700 text-white shadow-glow disabled:opacity-50"
+                    style={{ background: 'var(--grad-leaf)' }}
+                  >
+                    {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                    {t('savePassword')}
+                    {!busy && <ArrowRight className="h-4 w-4" strokeWidth={2.2} />}
+                  </button>
+                </form>
               )}
             </div>
 
