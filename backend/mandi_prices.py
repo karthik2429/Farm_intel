@@ -249,10 +249,17 @@ def _live_get(params: dict) -> Optional[dict]:
                          timeout=_LIVE_TIMEOUT)
         with _live_lock:
             _live_state.update(alive=r.status_code == 200, last_probe=now)
-        return r.json() if r.status_code == 200 else None
-    except Exception:  # noqa: BLE001
+        if r.status_code != 200:
+            # A silent failure is what let a rejected feed look like a stale
+            # cache: the page showed week-old rows with no clue why. Keep the
+            # reason in the log so /market/status is not the only evidence.
+            print(f"[live] AGMARKNET HTTP {r.status_code}: {r.text[:160]}")
+            return None
+        return r.json()
+    except Exception as exc:  # noqa: BLE001
         with _live_lock:
             _live_state.update(alive=False, last_probe=now)
+        print(f"[live] AGMARKNET unreachable: {type(exc).__name__}: {exc}")
         return None
 
 

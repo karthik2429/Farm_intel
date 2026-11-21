@@ -37,6 +37,7 @@ document and page so the UI can cite it.
 from __future__ import annotations
 
 import json
+import os
 import re
 import threading
 from pathlib import Path
@@ -259,9 +260,19 @@ def _index() -> Any:
             return _state["index"]
         chunks = build_corpus()
         _state["chunks"] = chunks
-        try:
-            _state["index"] = _ChromaIndex(chunks)
-        except Exception:  # noqa: BLE001 - chroma missing/model download failed
+        # TF-IDF is the default. ChromaDB pulls the all-MiniLM-L6-v2 ONNX
+        # embedder (roughly 100 MB on top of onnxruntime) the first time it
+        # indexes, and on a small container that spike killed the API process
+        # mid-request: /fertilizer/recommend answered 502 and the container
+        # restarted. TF-IDF reuses the sklearn already loaded for the other
+        # models, so it costs nothing extra; chroma is opt-in by env.
+        prefer = (os.environ.get("FARMINTEL_ICAR_BACKEND") or "").strip().lower()
+        if prefer == "chroma":
+            try:
+                _state["index"] = _ChromaIndex(chunks)
+            except Exception:  # noqa: BLE001 - missing model/download failure
+                _state["index"] = _TfidfIndex(chunks)
+        else:
             _state["index"] = _TfidfIndex(chunks)
         _state["backend"] = _state["index"].name
         return _state["index"]
