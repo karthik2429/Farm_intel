@@ -22,7 +22,7 @@ import os
 import sqlite3
 import threading
 from contextlib import contextmanager
-from datetime import date as date_cls
+from datetime import date as date_cls, timedelta
 from typing import Any, Dict, Iterable, List, Optional
 
 import pandas as pd
@@ -237,6 +237,56 @@ def upsert_many(rows: Iterable[dict]) -> int:
             ))
             n += 1
     return n
+
+
+def sync_from_supabase(days: int = 3, page: int = 1000) -> int:
+    """Copy the shared Supabase rows for the last `days` days into SQLite.
+
+    api.data.gov.in refuses connections from datacenter networks, so the API
+    container can never fetch AGMARKNET itself - only the machine/runner that
+    ingests does, and it mirrors the rows to Supabase. Reading them back here is
+    what keeps the deployed app on the real trading day instead of the copy
+    baked into the image (which is what made every price look 11 days old).
+
+    Returns the number of rows written; 0 when Supabase is not configured or
+    the request fails, which leaves the local store untouched.
+    """
+    url = (settings.supabase_url or "").rstrip("/")
+    key = settings.supabase_service_key or settings.supabase_anon_key
+    if not url or not key:
+        return 0
+    import requests  # local import: the store works without the HTTP client
+
+    since = (date_cls.today() - timedelta(days=max(1, days))).isoformat()
+    fields = ("date,state,district,market,commodity,variety,"
+              "min_price,max_price,modal_price,source")
+    rows: List[dict] = []
+    start = 0
+    while start < 40000:
+        try:
+            resp = requests.get(
+                f"{url}/rest/v1/mandi_prices",
+                params={"select": fields, "date": f"gte.{since}",
+                        "order": "date.asc"},
+                headers={"apikey": key, "Authorization": f"Bearer {key}",
+                         "Range-Unit": "items",
+                         "Range": f"{start}-{start + page - 1}"},
+                timeout=20,
+            )
+        except Exception as exc:  # noqa: BLE001 - an outage must not break reads
+            print(f"[supabase] price sync unreachable: {type(exc).__name__}")
+            return 0
+        if resp.status_code not in (200, 206):
+            print(f"[supabase] price sync HTTP {resp.status_code}")
+            return 0
+        batch = resp.json() or []
+        rows.extend(batch)
+        if len(batch) < page:
+            break
+        start += page
+    if not rows:
+        return 0
+    return upsert_many(rows)
 
 
 def _f(v) -> Optional[float]:

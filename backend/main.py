@@ -17,6 +17,8 @@ from typing import Optional, List, Dict, Any
 import sys
 import json
 import re
+import threading
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -90,6 +92,37 @@ async def load_models():
         print(f"✅ crop model loaded ({len(encoders['crop_label'].classes_)} crops)")
     except Exception as e:  # noqa: BLE001
         print(f"⚠️ Failed to load crop model: {e}")
+
+
+_PRICE_SYNC_STARTED = False
+
+
+def _price_sync_loop() -> None:
+    """Pull the shared Supabase prices into the local store, then repeat.
+
+    This container cannot reach api.data.gov.in (connections from datacenter
+    networks are refused), so the ingest that runs where AGMARKNET is reachable
+    mirrors its rows to Supabase. Without this loop the app only ever showed the
+    price store baked into the image, which is why every quote looked days old
+    no matter how often the ingest ran.
+    """
+    while True:
+        try:
+            written = price_store.sync_from_supabase(days=3)
+            if written:
+                print(f"✅ supabase price sync: {written} rows")
+        except Exception as exc:  # noqa: BLE001 - never kill the sync thread
+            print(f"[supabase] price sync failed: {type(exc).__name__}: {exc}")
+        time.sleep(1800)
+
+
+@app.on_event("startup")
+def start_price_sync() -> None:
+    global _PRICE_SYNC_STARTED
+    if _PRICE_SYNC_STARTED:
+        return
+    _PRICE_SYNC_STARTED = True
+    threading.Thread(target=_price_sync_loop, daemon=True).start()
 
 
 # ─────────────────────── Request / Response models ───────────────────────
