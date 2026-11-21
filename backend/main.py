@@ -16,6 +16,7 @@ from collections import OrderedDict
 from typing import Optional, List, Dict, Any
 import sys
 import json
+import re
 from datetime import datetime
 from pathlib import Path
 
@@ -307,6 +308,58 @@ async def health_check():
         "version": "3.0.0",
         "port": settings.backend_port,
     }
+
+
+class SignupRequest(BaseModel):
+    email: str
+    password: str
+
+
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+@app.post("/auth/signup")
+async def signup(payload: SignupRequest):
+    """Create a confirmed Supabase account with a password.
+
+    Supabase's built-in mailer allows only a couple of messages per hour, so the
+    email-code flow fails for most sign-ups. Creating the user through the admin
+    API marks the email confirmed, which lets the browser sign in with
+    `signInWithPassword` without any email. The service key stays server side.
+    """
+    email = payload.email.strip().lower()
+    if not _EMAIL_RE.match(email):
+        raise HTTPException(status_code=400, detail="Enter a valid email address")
+    if len(payload.password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+    if not (settings.supabase_url and settings.supabase_service_key):
+        raise HTTPException(status_code=503, detail="Sign-up is not configured on the server")
+
+    url = f"{settings.supabase_url.rstrip('/')}/auth/v1/admin/users"
+    headers = {
+        "apikey": settings.supabase_service_key,
+        "Authorization": f"Bearer {settings.supabase_service_key}",
+        "Content-Type": "application/json",
+    }
+    try:
+        resp = requests.post(
+            url,
+            json={"email": email, "password": payload.password, "email_confirm": True},
+            headers=headers,
+            timeout=20,
+        )
+    except requests.RequestException as exc:
+        raise HTTPException(status_code=502, detail="Could not reach the sign-up service") from exc
+
+    if resp.status_code in (200, 201):
+        return {"ok": True, "email": email}
+    body = resp.text.lower()
+    if resp.status_code == 422 or "already" in body or "exists" in body:
+        raise HTTPException(
+            status_code=409,
+            detail="An account with this email already exists. Sign in instead.",
+        )
+    raise HTTPException(status_code=502, detail="Could not create the account")
 
 
 @app.get("/model/crop")

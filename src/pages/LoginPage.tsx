@@ -35,6 +35,8 @@ const LoginPage: React.FC = () => {
   const [busy, setBusy] = React.useState(false);
   const [resendIn, setResendIn] = React.useState(0);
   const [attempts, setAttempts] = React.useState(0);
+  const [useCode, setUseCode] = React.useState(false);
+  const [password, setPassword] = React.useState('');
   const inputs = React.useRef<(HTMLInputElement | null)[]>([]);
 
   // Already signed in → straight to the app (or onboarding when incomplete).
@@ -107,6 +109,56 @@ const LoginPage: React.FC = () => {
       navigate(cached?.onboarding_complete ? '/home' : '/onboarding', { replace: true });
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Verification failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const passwordAuth = async () => {
+    if (!supabaseConfigured || !supabase) {
+      toast.error('Sign-in is not configured: set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.');
+      return;
+    }
+    if (!emailValid) {
+      toast.error('Enter a valid email address');
+      return;
+    }
+    if (password.length < 8) {
+      toast.error('Password must be at least 8 characters');
+      return;
+    }
+    setBusy(true);
+    try {
+      if (tab === 'signup') {
+        // Accounts are created confirmed by the backend, because Supabase's
+        // built-in mailer is rate limited to a couple of messages per hour.
+        const res = await fetch(`${env.apiBaseUrl}/auth/signup`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: email.trim(), password }),
+        });
+        if (!res.ok) {
+          const body = (await res.json().catch(() => ({}))) as { detail?: string };
+          toast.error(body.detail || 'Could not create the account');
+          return;
+        }
+      }
+      const { error } = await supabase.auth.signInWithPassword({
+        email: email.trim(),
+        password,
+      });
+      if (error) {
+        toast.error(
+          error.message === 'Invalid login credentials'
+            ? 'Wrong email or password. New here? Use "Create account".'
+            : error.message,
+        );
+        return;
+      }
+      const cached = readCachedProfile();
+      navigate(cached?.onboarding_complete ? '/home' : '/onboarding', { replace: true });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Network error while signing in');
     } finally {
       setBusy(false);
     }
@@ -229,8 +281,8 @@ const LoginPage: React.FC = () => {
                 </h2>
                 <p className="mt-0.5 text-[12.5px] text-ink-muted">
                   {tab === 'login'
-                    ? 'Use Google or a one-time email code. No password.'
-                    : 'Takes 10 seconds — Google or email, no password.'}
+                    ? 'Use your email and password, or a one-time email code.'
+                    : 'Takes 10 seconds — an email and a password.'}
                 </p>
               </div>
 
@@ -294,7 +346,7 @@ const LoginPage: React.FC = () => {
                 <form
                   onSubmit={(e) => {
                     e.preventDefault();
-                    void sendCode();
+                    void (useCode ? sendCode() : passwordAuth());
                   }}
                   className="space-y-3"
                 >
@@ -316,19 +368,53 @@ const LoginPage: React.FC = () => {
                     </div>
                   </label>
 
+                  {!useCode && (
+                    <label className="block">
+                      <span className="mb-1 block text-[11px] font-600 uppercase tracking-[0.07em] text-ink-muted">
+                        {t('password')}
+                      </span>
+                      <div className="flex h-[52px] items-center gap-2 rounded-sm border border-border bg-surface-2 px-3 focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/20">
+                        <Lock className="h-4 w-4 text-ink-muted" strokeWidth={1.9} />
+                        <input
+                          type="password"
+                          autoComplete={tab === 'signup' ? 'new-password' : 'current-password'}
+                          value={password}
+                          onChange={(e) => setPassword(e.target.value)}
+                          placeholder={t('enterPassword')}
+                          className="h-full w-full bg-transparent text-[15px] outline-none placeholder:text-ink-muted/60"
+                        />
+                      </div>
+                    </label>
+                  )}
+
                   <button
                     type="submit"
-                    disabled={busy || !emailValid}
+                    disabled={busy || !emailValid || (!useCode && password.length < 8)}
                     className="press flex h-12 w-full items-center justify-center gap-2 rounded-sm bg-leaf text-[14.5px] font-700 text-white shadow-glow disabled:opacity-50"
                     style={{ background: 'var(--grad-leaf)' }}
                   >
                     {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                    {busy ? 'Sending…' : t('sendOtp')}
+                    {busy
+                      ? useCode ? 'Sending…' : 'Signing in…'
+                      : useCode ? t('sendOtp') : tab === 'login' ? t('signIn') : t('createAccount')}
                     {!busy && <ArrowRight className="h-4 w-4" strokeWidth={2.2} />}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setUseCode((v) => !v);
+                      setStep('email');
+                      setOtp(['', '', '', '', '', '']);
+                    }}
+                    className="mx-auto block text-[11.5px] font-600 text-primary hover:underline"
+                  >
+                    {useCode ? t('usePassword') : t('useEmailCode')}
                   </button>
                   <p className="flex items-center justify-center gap-1.5 text-[11px] text-ink-muted">
                     <Lock className="h-3 w-3" strokeWidth={2} />
-                    Passwordless. Only {env.enableEmailOtp ? 'email' : 'Google'} sign-in is enabled.
+                    {useCode
+                      ? `Passwordless. Only ${env.enableEmailOtp ? 'email' : 'Google'} sign-in is enabled.`
+                      : 'Your password goes only to the sign-in service — it is never emailed.'}
                   </p>
                 </form>
               ) : (
