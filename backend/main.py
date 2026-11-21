@@ -318,47 +318,19 @@ class SignupRequest(BaseModel):
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
-def _admin_find_user(email: str) -> Optional[dict]:
-    """Find an auth user by email — the admin API has no email filter.
-
-    Pages through the user list (this project holds a handful of accounts) and
-    matches case-insensitively. Never raises: a lookup failure just means the
-    caller reports the duplicate instead of repairing it.
-    """
-    key = settings.supabase_service_key
-    headers = {"apikey": key, "Authorization": f"Bearer {key}"}
-    base = settings.supabase_url.rstrip("/")
-    for page in (1, 2, 3):
-        try:
-            resp = requests.get(
-                f"{base}/auth/v1/admin/users",
-                headers=headers,
-                params={"page": page, "per_page": 200},
-                timeout=20,
-            )
-        except requests.RequestException:
-            return None
-        if resp.status_code != 200:
-            return None
-        users = (resp.json() or {}).get("users") or []
-        for user in users:
-            if (user.get("email") or "").lower() == email:
-                return user
-        if len(users) < 200:
-            break
-    return None
-
-
 @app.post("/auth/signup")
 async def signup(payload: SignupRequest):
     """Fallback account creation when Supabase cannot send mail.
 
     The normal sign-up path is `supabase.auth.signUp` in the browser followed by
     the confirmation code Supabase emails. Supabase's built-in mailer is quota
-    limited (a couple of messages per hour), so when that send is refused the
-    page calls this endpoint instead: the admin API creates the user already
-    confirmed and the browser signs in with the password it just chose. The
-    service key stays server side.
+    limited (a couple of messages per hour), so when a send is genuinely refused
+    the page calls this endpoint: the admin API creates the user already
+    confirmed and the browser signs in with the password it just chose.
+
+    Existing accounts are refused with 409 and never touched - without proof
+    that the caller owns the mailbox, writing a password here would be an
+    account takeover. The service key stays server side.
     """
     email = payload.email.strip().lower()
     if not _EMAIL_RE.match(email):
@@ -388,20 +360,9 @@ async def signup(payload: SignupRequest):
         return {"ok": True, "email": email}
     body = resp.text.lower()
     if resp.status_code == 422 or "already" in body or "exists" in body:
-        existing = _admin_find_user(email)
-        if existing and not existing.get("email_confirmed_at"):
-            # The browser's signUp created this user but could not send the
-            # confirmation mail, so it exists unconfirmed and cannot log in.
-            # Confirming it with the password the farmer just chose is what
-            # makes the retry work instead of dead-ending on "already exists".
-            upd = requests.put(
-                f"{url}/{existing['id']}",
-                json={"password": payload.password, "email_confirm": True},
-                headers=headers,
-                timeout=20,
-            )
-            if upd.status_code in (200, 201):
-                return {"ok": True, "email": email, "confirmed_existing": True}
+        # An existing account is never modified here, confirmed or not: this
+        # endpoint has no proof that the caller owns the mailbox, so letting it
+        # write a password would hand any known email address to a stranger.
         raise HTTPException(
             status_code=409,
             detail="An account with this email already exists. Sign in instead.",

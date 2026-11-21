@@ -35,6 +35,9 @@ const explain = (raw: string): string => {
   if (m.includes('invalid login credentials')) {
     return 'Wrong email or password.';
   }
+  if (m.includes('email not confirmed')) {
+    return 'This account never confirmed its email, and codes cannot be sent right now. Try again once email delivery is working.';
+  }
   if (m.includes('user already registered') || m.includes('already been registered')) {
     return 'That email already has an account — log in with your password.';
   }
@@ -93,6 +96,18 @@ const LoginPage: React.FC = () => {
 
   const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
   const redirectTo = `${window.location.origin}/`;
+
+  /**
+   * True only when Supabase refused to *send* the confirmation mail — a rate
+   * limit or a delivery failure. An invalid address, a weak password or an
+   * existing account must be reported as itself, never retried on the backend.
+   */
+  const mailSendFailed = (error: { message: string; status?: number; code?: string }): boolean => {
+    const code = (error.code || '').toLowerCase();
+    if (code === 'over_email_send_rate_limit' || code === 'email_send_error') return true;
+    if (error.status === 429) return true;
+    return /error sending|failed to send|unable to send|could not send/i.test(error.message);
+  };
 
   /** Create the account on the backend when Supabase cannot send mail. */
   const createWithoutEmail = async (): Promise<void> => {
@@ -278,9 +293,7 @@ const LoginPage: React.FC = () => {
           setTimeout(() => inputs.current[0]?.focus(), 80);
           return;
         }
-        const mailProblem =
-          error.status === 429 ||
-          /rate limit|smtp|confirmation|sending|email/i.test(error.message);
+        const mailProblem = mailSendFailed(error);
         if (!mailProblem) {
           toast.error(explain(error.message));
           return;
